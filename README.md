@@ -8,7 +8,7 @@
 
 FRANK è un assistente AI all-in-one, costruito su un Raspberry Pi 5, che si integra nativamente nel cruscotto di un camper per fornire navigazione, monitoraggio del veicolo, gestione della manutenzione e molto altro, attraverso un'interfaccia vocale e touch dal design retrofuturistico.
 
-<img width="1024" height="1024" alt="FrankLogo" src="https://github.com/user-attachments/assets/761b459b-ac0f-46ee-b15c-221ec7e96324" />
+<img width="1024" height="461" alt="FrankBanner" src="https://github.com/user-attachments/assets/aae6fdc3-11f1-4c7d-a852-6006396fdc31" />
 
 [**CLICCA QUI PER LA DOCUMENTAZIONE COMPLETA**](https://lateral-saxophone-9f2.notion.site/Frank-camper-assistant-247521f00178803c900adc6934c3df84)
 

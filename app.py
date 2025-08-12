@@ -75,16 +75,8 @@ setup_socketio_events(socketio)
 #
 
 if __name__ == '__main__':
-    """
-    Avvia il server web e WebSocket.
-    """
+
     logging.info("Avvio del server di Frank su http://0.0.0.0:5000")
     
     # Avvia il server, rendendolo accessibile sulla rete locale
     socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
-
-#
-# --------------------------------------------------------------------------------------------------
-# ### FINE DEL FILE app.py ###
-# --------------------------------------------------------------------------------------------------
-#

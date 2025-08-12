@@ -98,7 +98,7 @@ L'identità visiva di FRANK è un omaggio funzionale all'estetica retrofuturisti
 Il progetto è organizzato in una struttura modulare per facilitare lo sviluppo e la manutenzione.
 
 ```
-frank_assistant/
+.../
 │
 ├── app.py                  # Entry point principale dell'applicazione
 ├── config.ini              # File di configurazione

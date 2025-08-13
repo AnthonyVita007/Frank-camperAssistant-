@@ -1,8 +1,6 @@
 /*----------------------------------------------------------------
-Stile "KITT" full-screen per Frank Camper Assistant
-Obiettivo: layout a due blocchi verticali (titolo + console), sfondo nero,
-testo stile console monospaziato, colori ad alto contrasto (bianco/rosso),
-input in basso con look minimal e pulsante rosso.
+Stile "KITT" per Frank Camper Assistant - Modalità DEBUG
+Header/Footer fissi, workspace scrollabile con log testuale
 ----------------------------------------------------------------*/
 
 /*----------------------------------------------------------------
@@ -15,78 +13,58 @@ VARIABILI, FONT E RESET BASE
   --white: #ffffff;
   --red: #ff0000;
   --red-soft: #ff4d4d;
+  --amber: #ffbf00;
+  --cyan: #00ffff;
   --green: #00ff66;
   --scanline: rgba(255, 255, 255, 0.035);
 
-  /* font console coerente tra log e placeholder */
   --console-font: 'VT323', Consolas, Menlo, Monaco, "Courier New", monospace;
-
-  /* dimensioni base maggiorate */
   --base-font-size: 18px;
 }
 
 /*----------------------------------------------------------------
-IMPOSTAZIONI GLOBALI (html, body)
-- full-screen
-- tema scuro
-- font monospaziato (console)
-- layout a colonna
+IMPOSTAZIONI GLOBALI
 ----------------------------------------------------------------*/
 html,
 body {
-  /* layout */
   height: 100%;
-  min-height: 100vh;
   margin: 0;
   padding: 0;
-  overflow: hidden; /* niente scroll sulla pagina, solo nella console */
-
-  /* tema */
   background: var(--black);
   color: var(--white);
-
-  /* font console */
   font-family: var(--console-font);
   font-size: var(--base-font-size);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  /* struttura verticale */
+  
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /*----------------------------------------------------------------
-CONTENITORE PRINCIPALE
-- occupa l'intera viewport
-- organizza titolo, console e input in colonna
+HEADER FISSO
 ----------------------------------------------------------------*/
-.container {
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-  width: 100vw;
-  height: 100vh;
-  padding: 24px;
-  gap: 14px;
+.header-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  
+  background: var(--black);
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/*----------------------------------------------------------------
-TITOLO (h1)
-- centrato
-- rosso KITT
-- molto più grande con glow
-----------------------------------------------------------------*/
-h1 {
+.header-fixed h1 {
   margin: 0;
   text-align: center;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-
   color: var(--red);
   font-weight: 700;
-  /* titolo sensibilmente più grande */
-  font-size: clamp(48px, 8vw, 140px);
+  font-size: clamp(32px, 6vw, 80px);
   line-height: 1;
   text-shadow:
     0 0 10px rgba(255, 0, 0, 0.6),
@@ -94,18 +72,23 @@ h1 {
 }
 
 /*----------------------------------------------------------------
-AREA CONSOLE (#log-container)
-- riempie lo spazio rimanente
-- scroll verticale
-- scanline + effetto "schermo incavato" (arcade)
+WORKSPACE CENTRALE SCROLLABILE
+----------------------------------------------------------------*/
+.workspace-scrollable {
+  flex: 1;
+  margin-top: calc(120px); /* spazio per header */
+  margin-bottom: calc(100px); /* spazio per footer */
+  overflow: hidden; /* il log-container gestisce il suo scroll */
+  padding: 20px;
+}
+
+/*----------------------------------------------------------------
+LOG CONTAINER
 ----------------------------------------------------------------*/
 #log-container {
-  /* dimensionamento e layout */
-  flex: 1 1 auto;
+  height: 100%;
   width: 100%;
   box-sizing: border-box;
-
-  /* spaziatura interna */
   padding: 14px;
 
   /* sfondo: scanlines su nero */
@@ -123,34 +106,30 @@ AREA CONSOLE (#log-container)
   overflow-y: auto;
   overflow-x: hidden;
 
-  /* tipografia base (più grande) */
+  /* tipografia base */
   font-family: var(--console-font);
-  font-size: clamp(30px, 4vh, 60px);
+  font-size: clamp(16px, 2.5vh, 24px);
   line-height: 1.5;
 
   /* effetto schermo incavato */
   position: relative;
   border-radius: 14px;
-  /* ombre interne su tutti i lati per profondità */
   box-shadow:
     inset 0 18px 28px rgba(0, 0, 0, 0.9),
     inset 0 -18px 32px rgba(0, 0, 0, 0.92),
     inset 18px 0 28px rgba(0, 0, 0, 0.88),
     inset -18px 0 28px rgba(0, 0, 0, 0.88),
-    /* leggera ombra esterna per il "bezel" */
     0 6px 24px rgba(0, 0, 0, 0.7);
-  /* sottile filo per effetto hardware */
   outline: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-/* overlay interno: vignette per simulare curvatura e profondità */
+/* overlay interno: vignette */
 #log-container::before {
   content: "";
   position: absolute;
   inset: 6px;
   border-radius: 10px;
   pointer-events: none;
-  /* vignetta centrale con bordi più scuri */
   background:
     radial-gradient(
       ellipse at center,
@@ -162,7 +141,7 @@ AREA CONSOLE (#log-container)
   z-index: 0;
 }
 
-/* riflesso leggero in alto/basso per effetto "vetro" */
+/* riflesso leggero */
 #log-container::after {
   content: "";
   position: absolute;
@@ -176,85 +155,82 @@ AREA CONSOLE (#log-container)
   z-index: 0;
 }
 
-/* righe dei messaggi (aggiunte da JS) sopra gli overlay */
+/* righe dei messaggi */
 #log-container > * {
   position: relative;
   z-index: 1;
 }
+
 #log-container > div {
   margin-bottom: 8px;
   white-space: pre-wrap;
   word-break: break-word;
   text-shadow: 0 0 4px rgba(255, 255, 255, 0.12);
-  font-family: var(--console-font); /* coerenza con placeholder */
+  font-family: var(--console-font);
 }
 
 /*----------------------------------------------------------------
-SCROLLBAR (WebKit)
+SCROLLBAR LOG
 ----------------------------------------------------------------*/
 #log-container::-webkit-scrollbar {
   width: 8px;
 }
+
 #log-container::-webkit-scrollbar-track {
   background: transparent;
 }
+
 #log-container::-webkit-scrollbar-thumb {
   background: rgba(255, 0, 0, 0.4);
   border-radius: 4px;
 }
+
 #log-container::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 0, 0, 0.6);
 }
 
 /*----------------------------------------------------------------
-AREA INPUT (.input-area)
-- sempre in basso
-- layout orizzontale
+FOOTER FISSO
 ----------------------------------------------------------------*/
+.footer-fixed {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  
+  background: var(--black);
+  padding: 20px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .input-area {
   display: flex;
   align-items: center;
   gap: 14px;
-
-  /* separazione visiva dalla console */
-  padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 /*----------------------------------------------------------------
-CAMPO DI TESTO (#command-input)
-- look prompt (testo verde, sfondo nero)
-- nessun bordo visibile
-- cursore e glow "console"
-- font allineato a console/log
+CAMPO DI TESTO
 ----------------------------------------------------------------*/
 #command-input {
-  /* dimensioni/layout */
-  flex: 1 1 auto;
+  flex: 1;
   min-height: 48px;
-  box-sizing: border-box;
-
-  /* look console */
   background: transparent;
   color: var(--green);
   border: none;
   outline: none;
   padding: 12px 10px;
-
-  /* testo/cursore */
   caret-color: var(--green);
   text-shadow: 0 0 6px rgba(0, 255, 102, 0.45);
-
-  /* tipografia (più grande) */
   font-family: var(--console-font);
   font-size: clamp(16px, 2.6vh, 22px);
   letter-spacing: 0.02em;
-
-  /* effetto blink “soft” per richiamare un terminale */
   animation: input-glow 2.2s ease-in-out infinite;
 }
 
-/* placeholder coerente (stesso font del log) */
 #command-input::placeholder {
   color: rgba(255, 255, 255, 0.35);
   text-shadow: none;
@@ -263,25 +239,19 @@ CAMPO DI TESTO (#command-input)
 }
 
 /*----------------------------------------------------------------
-PULSANTE INVIA (#send-button)
-- minimal: solo testo rosso
-- nessuno sfondo/bordo
-- hover più luminoso
+PULSANTE INVIA
 ----------------------------------------------------------------*/
 #send-button {
   background: transparent;
   border: none;
   outline: none;
-
   color: var(--red);
   font-weight: 700;
   font-size: clamp(14px, 2.2vh, 20px);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-
   padding: 12px 14px;
   cursor: pointer;
-
   transition: color 0.2s ease, text-shadow 0.2s ease, transform 0.05s ease;
 }
 
@@ -297,20 +267,19 @@ PULSANTE INVIA (#send-button)
 }
 
 /*----------------------------------------------------------------
-ACCESSIBILITÀ E DETTAGLI
+ACCESSIBILITÀ
 ----------------------------------------------------------------*/
-/* focus visibile per tastiera */
 #command-input:focus-visible,
 #send-button:focus-visible {
   outline: 2px dashed rgba(255, 0, 0, 0.6);
   outline-offset: 2px;
 }
 
-/* selezione testo */
 ::selection {
   background: rgba(255, 0, 0, 0.55);
   color: var(--white);
 }
+
 #command-input::selection {
   background: rgba(0, 255, 102, 0.35);
   color: var(--white);
@@ -320,22 +289,30 @@ ACCESSIBILITÀ E DETTAGLI
 ANIMAZIONI
 ----------------------------------------------------------------*/
 @keyframes input-glow {
-  0% {
-    text-shadow: 0 0 3px rgba(0, 255, 102, 0.25);
-  }
-  50% {
-    text-shadow: 0 0 10px rgba(0, 255, 102, 0.65);
-  }
-  100% {
-    text-shadow: 0 0 3px rgba(0, 255, 102, 0.25);
-  }
+  0% { text-shadow: 0 0 3px rgba(0, 255, 102, 0.25); }
+  50% { text-shadow: 0 0 10px rgba(0, 255, 102, 0.65); }
+  100% { text-shadow: 0 0 3px rgba(0, 255, 102, 0.25); }
 }
 
 /*----------------------------------------------------------------
-RIDUZIONE MOTION (rispetto preferenze utente)
+RIDUZIONE MOTION
 ----------------------------------------------------------------*/
 @media (prefers-reduced-motion: reduce) {
-  #command-input {
-    animation: none;
+  #command-input { animation: none; }
+}
+
+/*----------------------------------------------------------------
+RESPONSIVE
+----------------------------------------------------------------*/
+@media (max-width: 768px) {
+  .header-fixed,
+  .footer-fixed {
+    padding: 15px 20px;
+  }
+  
+  .workspace-scrollable {
+    margin-top: 100px;
+    margin-bottom: 90px;
+    padding: 15px;
   }
 }

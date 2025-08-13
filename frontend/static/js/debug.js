@@ -1,5 +1,5 @@
 //----------------------------------------------------------------
-// Inizializzazione e utilities
+// JavaScript per modalità DEBUG - Log testuale
 //----------------------------------------------------------------
 
 //connessione
@@ -34,6 +34,23 @@ function clearLog() {
     //...
 }
 
+// helper: invio comando
+//connessione
+function sendCommand() {
+    //...
+    const text = (inputEl.value || '').trim();
+    //...
+    if (!text) return;
+    //...
+    appendLog(text, 'user');
+    //...
+    socket.emit('frontend_command', { data: text });
+    //...
+    inputEl.value = '';
+    //...
+    inputEl.focus();
+}
+
 //----------------------------------------------------------------
 // Eventi Socket.IO
 //----------------------------------------------------------------
@@ -45,7 +62,7 @@ socket.on('connect', () => {
     appendLog('Connessione al backend stabilita.', 'system');
 });
 
-// risposta dal backend (messaggi semplici)
+// risposta dal backend
 //connessione
 socket.on('backend_response', (payload) => {
     //...
@@ -54,16 +71,29 @@ socket.on('backend_response', (payload) => {
     appendLog(msg, 'backend');
 });
 
-// azioni strutturate dal backend (clear log, ecc.)
+// azioni strutturate dal backend
 //connessione
 socket.on('backend_action', (payload) => {
     //...
     const action = payload && payload.action;
     //...
     if (action === 'clear_log') {
-        // pulizia senza messaggi successivi
         //...
         clearLog();
+        //...
+        return;
+    }
+    //...
+    if (action === 'navigate') {
+        //...
+        const url = payload && payload.data;
+        //...
+        if (url) {
+            //...
+            appendLog(`Navigazione verso: ${url}`, 'system');
+            //...
+            window.location.href = url;
+        }
         //...
         return;
     }
@@ -88,23 +118,6 @@ socket.on('connect_error', (err) => {
  */
 //----------------------------------------------------------------
 
-// invio comando
-//connessione
-function sendCommand() {
-    //...
-    const text = (inputEl.value || '').trim();
-    //...
-    if (!text) return;
-    //...
-    appendLog(text, 'user');
-    //...
-    socket.emit('frontend_command', { data: text });
-    //...
-    inputEl.value = '';
-    //...
-    inputEl.focus();
-}
-
 // click bottone
 //connessione
 sendBtn.addEventListener('click', sendCommand);
@@ -119,7 +132,7 @@ inputEl.addEventListener('keydown', (e) => {
     }
 });
 
-// scorciatoia: Ctrl+L per pulire la console localmente (nessun messaggio)
+// scorciatoia: Ctrl+L per pulire la console localmente
 //connessione
 window.addEventListener('keydown', (e) => {
     //...
@@ -136,4 +149,7 @@ window.addEventListener('keydown', (e) => {
 
 // focus iniziale
 //connessione
-window.addEventListener('load', () => inputEl.focus());
+window.addEventListener('load', () => {
+    //...
+    inputEl.focus();
+});

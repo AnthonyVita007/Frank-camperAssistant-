@@ -1,6 +1,6 @@
 """
 ----------------------------------------------------------------------------------------------------
-### CODICE PER app.py (Versione Strutturata con config.ini) ###
+### CODICE PER app.py (Versione con routing separato user/debug) ###
 Questo file funge da punto di avvio per l'intera applicazione Frank.
 Il suo scopo è inizializzare il server, caricare la configurazione da config.ini,
 e delegare la gestione degli eventi al controller principale.
@@ -62,19 +62,37 @@ socketio = SocketIO(app)
 
 #
 # --------------------------------------------------------------------------------------------------
-# ### PARTE 2: GESTIONE DELLA ROTTA HTTP ###
-# Definiamo la rotta per servire l'interfaccia grafica.
+# ### PARTE 2: GESTIONE DELLE ROTTE HTTP ###
+# Definiamo le rotte per servire le interfacce separate.
 # --------------------------------------------------------------------------------------------------
 #
 
-# Definizione della rotta principale
+# Rotta principale: reindirizza alla modalità utente
 @app.route('/')
 def index():
     """
-    Serve la pagina principale index.html.
+    Rotta principale che reindirizza alla modalità utente.
     """
-    logging.info("Client connesso. Servo la pagina principale dell'interfaccia.")
-    return render_template('index.html')
+    logging.info("Client connesso. Reindirizzo alla modalità utente.")
+    return render_template('user.html')
+
+# Rotta modalità utente
+@app.route('/user')
+def user_mode():
+    """
+    Serve la pagina della modalità utente con tile.
+    """
+    logging.info("Client richiede modalità utente.")
+    return render_template('user.html')
+
+# Rotta modalità debug  
+@app.route('/debug')
+def debug_mode():
+    """
+    Serve la pagina della modalità debug con log testuale.
+    """
+    logging.info("Client richiede modalità debug.")
+    return render_template('debug.html')
 
 
 #

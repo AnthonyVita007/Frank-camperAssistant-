@@ -61,8 +61,8 @@ def setup_socketio_events(socketio_instance: SocketIO):
     def handle_frontend_command(json_data):
         """
         Gestisce i comandi ricevuti dal frontend.
-        Pipeline minima:
-        1) Comandi speciali (/clear)
+        Pipeline:
+        1) Comandi speciali (/clear, navigazione pagine)
         2) Parse intent
         3) Recupera stato rete
         4) Arricchisce contesto (OBD/GPS se richiesto)
@@ -78,14 +78,38 @@ def setup_socketio_events(socketio_instance: SocketIO):
         logging.info(f"[Controller] Comando ricevuto: '{command}'")
 
         #----------------------------------------------------------------
-        # COMANDO SPECIALE: /clear → pulizia console client
+        # COMANDI SPECIALI
         #----------------------------------------------------------------
         #connessione
-        if command.lower().startswith('/clear'):
+        lower_cmd = command.lower()
+        #...
+        if lower_cmd.startswith('/clear'):
             #...
             emit('backend_action', {
                 'action': 'clear_log',
                 'data': 'Console pulita su richiesta.'
+            })
+            #...
+            return
+
+        # navigazione verso modalità DEBUG 
+        #connessione
+        if lower_cmd.startswith('/debugmode'):
+            #...
+            emit('backend_action', {
+                'action': 'navigate',
+                'data': '/debug'
+            })
+            #...
+            return
+
+        # navigazione verso modalità UTENTE
+        #connessione
+        if lower_cmd.startswith('/usermode'):
+            #...
+            emit('backend_action', {
+                'action': 'navigate', 
+                'data': '/user'
             })
             #...
             return

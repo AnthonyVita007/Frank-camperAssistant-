@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frank Assistant - User Mode</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/user.css') }}">
+</head>
+
+<body>
+
+    <!-- HEADER FISSO -->
+    <header class="header-fixed">
+        <h1>Frank</h1>
+    </header>
+
+    <!-- WORKSPACE CENTRALE SCROLLABILE -->
+    <main class="workspace-scrollable">
+        <div class="tiles-grid">
+            <button class="app-tile" id="tile-vehicle" title="Stato veicolo">
+                <div class="tile-icon">▣</div>
+                <div class="tile-label">Stato veicolo</div>
+            </button>
+            <button class="app-tile" id="tile-location" title="Posizione">
+                <div class="tile-icon">⊕</div>
+                <div class="tile-label">Posizione</div>
+            </button>
+            <button class="app-tile" id="tile-network" title="Rete">
+                <div class="tile-icon">▲</div>
+                <div class="tile-label">Rete</div>
+            </button>
+            <button class="app-tile" id="tile-maintenance" title="Manutenzione">
+                <div class="tile-icon">⚒</div>
+                <div class="tile-label">Manutenzione</div>
+            </button>
+            <button class="app-tile" id="tile-weather" title="Meteo">
+                <div class="tile-icon">☁</div>
+                <div class="tile-label">Meteo</div>
+            </button>
+            <button class="app-tile" id="tile-settings" title="Impostazioni">
+                <div class="tile-icon">⚙</div>
+                <div class="tile-label">Impostazioni</div>
+            </button>
+            <!-- Aggiungi più tile per testare lo scroll -->
+            <button class="app-tile" id="tile-test1" title="Test 1">
+                <div class="tile-icon">◆</div>
+                <div class="tile-label">Test 1</div>
+            </button>
+            <button class="app-tile" id="tile-test2" title="Test 2">
+                <div class="tile-icon">●</div>
+                <div class="tile-label">Test 2</div>
+            </button>
+        </div>
+    </main>
+
+    <!-- FOOTER FISSO -->
+    <footer class="footer-fixed">
+        <div class="input-area">
+            <input type="text" id="command-input" placeholder="Scrivi un comando o fai una domanda...">
+            <button id="send-button">Invia</button>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/user.js') }}"></script>
+
+</body>
+
+</html>

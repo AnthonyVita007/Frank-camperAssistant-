@@ -38,6 +38,7 @@ def setup_socketio_events(socketio_instance: SocketIO):
     e collega tutti i gestori di eventi a essa.
     Questo mantiene il nostro codice pulito e modulare.
     """
+
     # Usiamo l'istanza passata per registrare i nostri gestori di eventi
     # Questo è un modo avanzato ma molto pulito di strutturare applicazioni Flask.
     
@@ -46,8 +47,12 @@ def setup_socketio_events(socketio_instance: SocketIO):
         """
         Gestisce la connessione iniziale del client.
         """
+        #----------------------------------------------------------------
+        # LOGICA DI CONNESSIONE
+        #----------------------------------------------------------------
+        #connessione
         logging.info('Client connesso al controller principale!')
-        # La risposta di benvenuto ora viene inviata da qui.
+        #...
         emit('backend_response', {'data': 'Benvenuto! Controller di Frank attivo.'})
 
     @socketio_instance.on('frontend_command')
@@ -55,24 +60,57 @@ def setup_socketio_events(socketio_instance: SocketIO):
         """
         Gestisce i comandi ricevuti dal frontend.
         Pipeline minima:
-        1) Parse intent
-        2) Recupera stato rete
-        3) Genera risposta (stub LLM)
+        1) Comandi speciali (/clear)
+        2) Parse intent
+        3) Recupera stato rete
+        4) Genera risposta (stub LLM)
+        5) Emissione al frontend
         """
+        #----------------------------------------------------------------
+        # ESTRAZIONE COMANDO
+        #----------------------------------------------------------------
+        #connessione
         command = (json_data or {}).get('data', '').strip()
+        #...
         logging.info(f"[Controller] Comando ricevuto: '{command}'")
 
-        # 1) Intent parsing
+        #----------------------------------------------------------------
+        # COMANDO SPECIALE: /clear → pulizia console client
+        #----------------------------------------------------------------
+        #connessione
+        if command.lower().startswith('/clear'):
+            #...
+            emit('backend_action', {
+                'action': 'clear_log',
+                'data': 'Console pulita su richiesta.'
+            })
+            #...
+            return
+
+        #----------------------------------------------------------------
+        # INTENT PARSING
+        #----------------------------------------------------------------
+        #connessione
         intent = parse_intent(command)
 
-        # 2) Stato rete
+        #----------------------------------------------------------------
+        # STATO RETE
+        #----------------------------------------------------------------
+        #connessione
         net = get_network_status()
 
-        # 3) Generazione risposta
+        #----------------------------------------------------------------
+        # GENERAZIONE RISPOSTA
+        #----------------------------------------------------------------
+        #connessione
         context = {"online": net.get("online"), "raw_command": command}
+        #...
         reply = generate_response(intent, context)
 
-        # 4) Emissione al frontend
+        #----------------------------------------------------------------
+        # EMISSIONE AL FRONTEND
+        #----------------------------------------------------------------
+        #connessione
         emit('backend_response', {'data': reply})
 
 

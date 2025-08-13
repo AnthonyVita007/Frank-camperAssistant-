@@ -1,77 +1,139 @@
 //----------------------------------------------------------------
-// Gestisce: connessione Socket.IO, invio comandi, rendering del log.
+// Inizializzazione e utilities
 //----------------------------------------------------------------
 
-//----------------------------------------------------------------
-// INIZIALIZZAZIONE E UTILS
-//----------------------------------------------------------------
-
-// connessione
+//connessione
 const socket = io();
-
-// riferimenti DOM
+//...
 const logContainer = document.getElementById('log-container');
+//...
 const inputEl = document.getElementById('command-input');
+//...
 const sendBtn = document.getElementById('send-button');
 
 // helper: append al log con autoscroll
+//connessione
 function appendLog(message, origin = 'system') {
+    //...
     const line = document.createElement('div');
-    // Prefisso origin per chiarezza (utente, backend, sistema)
+    //...
     const prefix = origin === 'user' ? 'Tu' : origin === 'backend' ? 'Frank' : 'Sistema';
+    //...
     line.textContent = `[${prefix}] ${message}`;
+    //...
     logContainer.appendChild(line);
-    // autoscroll
+    //...
     logContainer.scrollTop = logContainer.scrollHeight;
 }
 
+// helper: pulisci tutto il log
+//connessione
+function clearLog() {
+    //...
+    logContainer.innerHTML = '';
+    //...
+}
+
 //----------------------------------------------------------------
-// EVENTI SOCKET.IO
+// Eventi Socket.IO
 //----------------------------------------------------------------
 
 // connessione stabilita
+//connessione
 socket.on('connect', () => {
+    //...
     appendLog('Connessione al backend stabilita.', 'system');
 });
 
-// risposta dal backend (main_controller.py emette 'backend_response')
+// risposta dal backend (messaggi semplici)
+//connessione
 socket.on('backend_response', (payload) => {
+    //...
     const msg = payload && payload.data ? payload.data : '(risposta vuota)';
+    //...
     appendLog(msg, 'backend');
 });
 
-// disconnessione / errori
-socket.on('disconnect', () => {
-    appendLog('Disconnesso dal backend.', 'system');
+// azioni strutturate dal backend (clear log, ecc.)
+//connessione
+socket.on('backend_action', (payload) => {
+    //...
+    const action = payload && payload.action;
+    //...
+    if (action === 'clear_log') {
+        // pulizia senza messaggi successivi
+        //...
+        clearLog();
+        //...
+        return;
+    }
+    //... eventuali altre azioni future
 });
 
+// disconnessione / errori
+//connessione
+socket.on('disconnect', () => {
+    //...
+    appendLog('Disconnesso dal backend.', 'system');
+});
+//connessione
 socket.on('connect_error', (err) => {
+    //...
     appendLog(`Errore di connessione: ${err.message || err}`, 'system');
 });
 
 //----------------------------------------------------------------
-// INTERAZIONE UTENTE
+/**
+ * Interazione utente
+ */
 //----------------------------------------------------------------
 
 // invio comando
+//connessione
 function sendCommand() {
+    //...
     const text = (inputEl.value || '').trim();
+    //...
     if (!text) return;
+    //...
     appendLog(text, 'user');
+    //...
     socket.emit('frontend_command', { data: text });
+    //...
     inputEl.value = '';
+    //...
     inputEl.focus();
 }
 
 // click bottone
+//connessione
 sendBtn.addEventListener('click', sendCommand);
 
 // invio con Enter
+//connessione
 inputEl.addEventListener('keydown', (e) => {
+    //...
     if (e.key === 'Enter') {
+        //...
         sendCommand();
     }
 });
 
+// scorciatoia: Ctrl+L per pulire la console localmente (nessun messaggio)
+//connessione
+window.addEventListener('keydown', (e) => {
+    //...
+    const isCtrlL = (e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L');
+    //...
+    if (isCtrlL) {
+        //...
+        e.preventDefault();
+        //...
+        clearLog();
+        //...
+    }
+});
+
 // focus iniziale
+//connessione
 window.addEventListener('load', () => inputEl.focus());

@@ -124,3 +124,61 @@ Il progetto è organizzato in una struttura modulare per facilitare lo sviluppo 
 *   [ ] **Integrazione Telecamera:** Utilizzo di una telecamera per funzioni di dashcam o riconoscimento di oggetti.
 *   [ ] **Personalizzazione Avanzata della Voce:** Implementazione di clonazione vocale per una personalizzazione ancora maggiore.
 *   [ ] **Modalità Sentinella:** Funzionalità di monitoraggio del veicolo a camper fermo.
+
+---
+
+### 8. Eventi WebSocket e Contratti
+
+Questa sezione definisce i contratti degli eventi WebSocket usati tra frontend e backend, in linea con il pattern “Frontend → app.py → main_controller.py → Services”.
+
+- Canale: Socket.IO
+- Namespace: predefinito
+- Versioni consigliate:
+  - Client: socket.io 4.7.x
+  - Server: Flask-SocketIO 5.x
+
+Eventi dal Frontend al Backend
+- Evento: frontend_command
+  - Payload: { "data": string }
+  - Descrizione: invia un comando testuale o domanda generica.
+  - Esempio:
+    {
+      "data": "stato rete"
+    }
+
+Eventi dal Backend al Frontend
+- Evento: backend_response
+  - Payload: { "data": string }
+  - Descrizione: messaggio semplice destinato al log UI.
+  - Note: il backend può emettere più messaggi consecutivi per lo stesso comando.
+
+Comandi Speciali
+- /history [N]
+  - Azione: il backend invia gli ultimi N eventi del log, dal più vecchio al più recente.
+  - Default: N=20 se omesso.
+  - Esempio: "/history 50"
+
+Comportamento alla Connessione
+- All’evento connect:
+  - Il backend crea un evento di sistema ("Client connesso al controller principale.").
+  - Precarica automaticamente gli ultimi N eventi (configurati nel controller) tramite una sequenza di backend_response, quindi invia un messaggio di benvenuto.
+
+Formato Log UI
+- Il frontend mostra le righe come testo semplice con prefissi:
+  - [Sistema] ...  (eventi di sistema)
+  - [Frank] ...    (risposte backend)
+  - [Tu] ...       (comandi utente)
+- Quando il backend invia lo storico, le righe sono formattate come:
+  [YYYY-MM-DDTHH:MM:SSZ] [source/event_type] contenuto
+
+Esempio di Flusso
+1) L’utente invia "sei online?"
+   - frontend → frontend_command { "data": "sei online?" }
+2) Il backend risponde con due messaggi:
+   - backend → backend_response { "data": "Sono online. La connessione di rete è disponibile." }
+   - backend → backend_response { "data": "---" } (separatore opzionale)
+
+Linee Guida
+- I nuovi eventi devono essere registrati in backend/main_controller.py con @socketio_instance.on('<nome_evento>').
+- Le risposte testuali semplici passano da backend_response.
+- Eventuali payload strutturati dovranno essere documentati qui con esempi JSON.

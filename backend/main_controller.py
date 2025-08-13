@@ -24,6 +24,8 @@ from flask_socketio import SocketIO, emit
 from backend.ai.intent_parser import parse_intent
 from backend.ai.llm_handler import generate_response
 from backend.services.network_service import get_network_status
+from backend.services.obd_service import get_vehicle_status
+from backend.services.gps_service import get_current_location
 
 #
 # --------------------------------------------------------------------------------------------------
@@ -63,8 +65,9 @@ def setup_socketio_events(socketio_instance: SocketIO):
         1) Comandi speciali (/clear)
         2) Parse intent
         3) Recupera stato rete
-        4) Genera risposta (stub LLM)
-        5) Emissione al frontend
+        4) Arricchisce contesto (OBD/GPS se richiesto)
+        5) Genera risposta (stub LLM)
+        6) Emissione al frontend
         """
         #----------------------------------------------------------------
         # ESTRAZIONE COMANDO
@@ -92,6 +95,10 @@ def setup_socketio_events(socketio_instance: SocketIO):
         #----------------------------------------------------------------
         #connessione
         intent = parse_intent(command)
+        #...
+        intent_name = intent.get("name", "unknown")
+        #...
+        logging.debug(f"[Controller] Intent rilevato: {intent}")
 
         #----------------------------------------------------------------
         # STATO RETE
@@ -100,11 +107,42 @@ def setup_socketio_events(socketio_instance: SocketIO):
         net = get_network_status()
 
         #----------------------------------------------------------------
-        # GENERAZIONE RISPOSTA
+        # COSTRUZIONE CONTESTO DI RISPOSTA
         #----------------------------------------------------------------
         #connessione
         context = {"online": net.get("online"), "raw_command": command}
         #...
+        try:
+            # Se serve lo stato veicolo, leggilo dal servizio OBD (stub)
+            #connessione
+            if intent_name == "vehicle_status":
+                #...
+                vehicle = get_vehicle_status()
+                #...
+                context["vehicle"] = vehicle
+
+            # Se serve la posizione, leggila dal servizio GPS (stub)
+            #connessione
+            if intent_name == "current_location":
+                #...
+                location = get_current_location()
+                #...
+                context["location"] = location
+
+        except Exception as e:
+            #----------------------------------------------------------------
+            # GESTIONE ERRORI SERVIZI
+            #----------------------------------------------------------------
+            #connessione
+            logging.error(f"[Controller] Errore durante la raccolta del contesto: {e}")
+            #...
+            # Non interrompiamo: il llm_handler gestirà campi mancanti
+            #...
+
+        #----------------------------------------------------------------
+        # GENERAZIONE RISPOSTA
+        #----------------------------------------------------------------
+        #connessione
         reply = generate_response(intent, context)
 
         #----------------------------------------------------------------

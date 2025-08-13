@@ -1,21 +1,23 @@
 """
 ----------------------------------------------------------------------------------------------------
-### CODICE PER app.py (Versione Strutturata) ###
+### CODICE PER app.py (Versione Strutturata con config.ini) ###
 Questo file funge da punto di avvio per l'intera applicazione Frank.
-Il suo unico scopo è inizializzare il server e delegare la gestione degli eventi
-al controller principale.
+Il suo scopo è inizializzare il server, caricare la configurazione da config.ini,
+e delegare la gestione degli eventi al controller principale.
 ----------------------------------------------------------------------------------------------------
 """
 
 #
 # --------------------------------------------------------------------------------------------------
 # ### PARTE 1: IMPORTAZIONI E CONFIGURAZIONE ###
-# Importiamo le librerie di base e i nostri moduli custom.
+# Importiamo le librerie di base, carichiamo la configurazione e i nostri moduli custom.
 # --------------------------------------------------------------------------------------------------
 #
 
 # Importazione delle librerie di sistema e Flask
 import logging
+import os
+import configparser
 from flask import Flask, render_template
 from flask_socketio import SocketIO
 
@@ -23,15 +25,36 @@ from flask_socketio import SocketIO
 # // Da questo momento, tutta la logica degli eventi sarà gestita da un file separato.
 from backend.main_controller import setup_socketio_events
 
-# Configurazione del sistema di logging
+# Configurazione del sistema di logging (livello regolabile in base al DEBUG)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+#----------------------------------------------------------------
+# CARICAMENTO CONFIGURAZIONE DA config.ini
+#----------------------------------------------------------------
+config = configparser.ConfigParser()
+if os.path.exists('config.ini'):
+    config.read('config.ini')
+else:
+    logging.warning("File config.ini non trovato: uso i valori di default.")
+
+SECRET_KEY = config.get('flask', 'SECRET_KEY', fallback='dev-secret-insecure')
+DEBUG = config.getboolean('flask', 'DEBUG', fallback=True)
+HOST = config.get('flask', 'HOST', fallback='0.0.0.0')
+PORT = config.getint('flask', 'PORT', fallback=5000)
+
+# Adegua il livello di logging in base al DEBUG
+if DEBUG:
+    logging.getLogger().setLevel(logging.DEBUG)
+    logging.debug("Modalità DEBUG attiva.")
+else:
+    logging.getLogger().setLevel(logging.INFO)
 
 # Inizializzazione dell'applicazione Flask
 # // I percorsi per le cartelle 'templates' e 'static'.
 app = Flask(__name__, template_folder='frontend/templates', static_folder='frontend/static')
 
-# Impostazione di una chiave segreta per la sicurezza
-app.config['SECRET_KEY'] = 'la-tua-chiave-segreta-super-sicura'
+# Impostazione di una chiave segreta per la sicurezza (presa da config.ini)
+app.config['SECRET_KEY'] = SECRET_KEY
 
 # Inizializzazione di SocketIO
 socketio = SocketIO(app)
@@ -76,7 +99,14 @@ setup_socketio_events(socketio)
 
 if __name__ == '__main__':
 
-    logging.info("Avvio del server di Frank su http://0.0.0.0:5000")
+    logging.info(f"Avvio del server di Frank su http://{HOST}:{PORT} (DEBUG={DEBUG})")
     
     # Avvia il server, rendendolo accessibile sulla rete locale
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
+    # allow_unsafe_werkzeug=True è comodo in sviluppo; in produzione usare un server WSGI/ASGI.
+    socketio.run(
+        app,
+        host=HOST,
+        port=PORT,
+        debug=DEBUG,
+        allow_unsafe_werkzeug=True if DEBUG else False
+    )

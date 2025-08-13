@@ -20,6 +20,11 @@ import logging
 # Importazione di SocketIO per poter definire i gestori di eventi
 from flask_socketio import SocketIO, emit
 
+# Import dei moduli AI/Services
+from backend.ai.intent_parser import parse_intent
+from backend.ai.llm_handler import generate_response
+from backend.services.network_service import get_network_status
+
 #
 # --------------------------------------------------------------------------------------------------
 # ### PARTE 2: DEFINIZIONE DELLA FUNZIONE DI SETUP ###
@@ -27,7 +32,7 @@ from flask_socketio import SocketIO, emit
 # --------------------------------------------------------------------------------------------------
 #
 
-def setup_socketio_events(socketio_instance):
+def setup_socketio_events(socketio_instance: SocketIO):
     """
     Questa funzione riceve l'istanza di SocketIO creata in app.py
     e collega tutti i gestori di eventi a essa.
@@ -49,23 +54,26 @@ def setup_socketio_events(socketio_instance):
     def handle_frontend_command(json_data):
         """
         Gestisce i comandi ricevuti dal frontend.
-        Questa diventerà la funzione più importante.
+        Pipeline minima:
+        1) Parse intent
+        2) Recupera stato rete
+        3) Genera risposta (stub LLM)
         """
-        command = json_data.get('data', 'Nessun dato')
-        logging.info(f"Controller ha ricevuto il comando: '{command}'")
+        command = (json_data or {}).get('data', '').strip()
+        logging.info(f"[Controller] Comando ricevuto: '{command}'")
 
-        #
-        # !!! LOGICA FUTURA DEL DIRETTORE D'ORCHESTRA !!!
-        # // 1. Passa il 'command' all'intent_parser per capire cosa fare.
-        # // 2. Controlla lo stato della rete con network_service.
-        # // 3. Chiama il servizio appropriato (db_service, obd_service, etc.).
-        # // 4. Passa i risultati al llm_handler per generare una risposta.
-        # // 5. Usa tts_service per convertire la risposta in audio (in futuro).
-        # // 6. Invia la risposta testuale al frontend.
-        #
-        
-        # Per ora, rispondiamo con una semplice conferma
-        emit('backend_response', {'data': f"Controller ha elaborato: '{command}'"})
+        # 1) Intent parsing
+        intent = parse_intent(command)
+
+        # 2) Stato rete
+        net = get_network_status()
+
+        # 3) Generazione risposta
+        context = {"online": net.get("online"), "raw_command": command}
+        reply = generate_response(intent, context)
+
+        # 4) Emissione al frontend
+        emit('backend_response', {'data': reply})
 
 
 #

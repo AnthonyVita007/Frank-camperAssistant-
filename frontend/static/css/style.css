@@ -1,0 +1,75 @@
+@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+
+:root {
+    --primary-black: #000000;
+    --primary-red: #FF0000;
+    --primary-amber: #FFBF00;
+    --primary-cyan: #00FFFF;
+    --glow-effect: 0 0 10px;
+}
+
+body {
+    background-color: var(--primary-black);
+    color: var(--primary-amber);
+    font-family: 'VT323', monospace;
+    margin: 0;
+    padding: 20px;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    border: 1px solid var(--primary-red);
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: var(--glow-effect) var(--primary-red);
+}
+
+h1 {
+    color: var(--primary-red);
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-shadow: var(--glow-effect) var(--primary-red);
+}
+
+#log-container {
+    height: 400px;
+    overflow-y: auto;
+    margin: 20px 0;
+    padding: 10px;
+    border: 1px solid var(--primary-amber);
+    background-color: rgba(255, 191, 0, 0.1);
+}
+
+.input-area {
+    display: flex;
+    gap: 10px;
+}
+
+#command-input {
+    flex: 1;
+    background-color: var(--primary-black);
+    border: 1px solid var(--primary-cyan);
+    color: var(--primary-cyan);
+    padding: 10px;
+    font-family: 'VT323', monospace;
+    font-size: 1.2em;
+}
+
+#send-button {
+    background-color: var(--primary-red);
+    color: var(--primary-black);
+    border: none;
+    padding: 10px 20px;
+    cursor: pointer;
+    font-family: 'VT323', monospace;
+    font-size: 1.2em;
+    text-transform: uppercase;
+    transition: all 0.3s ease;
+}
+
+#send-button:hover {
+    box-shadow: var(--glow-effect) var(--primary-red);
+}

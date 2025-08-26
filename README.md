@@ -104,7 +104,11 @@ Struttura attuale del repository:
 ├── app.py
 ├── backend/
 │   ├── __init__.py
-│   ├── main_controller.py
+│   ├── ai/
+│   │   ├── __init__.py
+│   │   ├── ai_handler.py
+│   │   ├── ai_processor.py
+│   │   └── ai_response.py
 │   └── core/
 │       ├── __init__.py
 │       ├── command_processor.py

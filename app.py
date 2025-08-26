@@ -23,7 +23,7 @@ from flask_socketio import SocketIO
 
 # Importazione del nostro controller principale
 # // Da questo momento, tutta la logica degli eventi sarà gestita da un file separato.
-from backend.main_controller import setup_socketio_events
+from backend.core.main_controller import setup_socketio_events
 
 # Configurazione del sistema di logging (livello regolabile in base al DEBUG)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

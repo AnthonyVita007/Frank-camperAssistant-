@@ -64,9 +64,9 @@ class AIProcessor:
         """
         try:
             # Get API key from environment variable
-            self._api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
+            self._api_key = os.getenv('GEMINI_API_KEY')
             if not self._api_key:
-                raise ValueError("GOOGLE_GEMINI_API_KEY environment variable is required")
+                raise ValueError("GEMINI_API_KEY environment variable is required")
             
             # Configure the API
             genai.configure(api_key=self._api_key)

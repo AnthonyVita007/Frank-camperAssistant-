@@ -118,34 +118,6 @@ socket.on('backend_action', (payload) => {
         //...
         return;
     }
-    
-    // Navigation actions (debug mode: text only)
-    if (action === 'open_navigator') {
-        appendLog('Navigazione richiesta - modalità debug (solo testo)', 'system');
-        return;
-    }
-    
-    if (action === 'render_route') {
-        const routeData = payload && payload.data;
-        if (routeData) {
-            // Display navigation info as text in debug mode
-            const stats = routeData.stats || {};
-            const warnings = routeData.warnings || [];
-            
-            appendLog(`Route calcolata: ${stats.distance_km || 0} km, ${stats.duration_min || 0} min`, 'system');
-            
-            if (warnings.length > 0) {
-                appendLog(`Avvisi (${warnings.length}):`, 'system');
-                warnings.forEach(warning => {
-                    appendLog(`- ${warning.type || 'Avviso'}: ${warning.message}`, 'system');
-                });
-            } else {
-                appendLog('Nessun avviso per questo percorso', 'system');
-            }
-        }
-        return;
-    }
-    
     //... eventuali altre azioni future
 });
 

@@ -313,14 +313,25 @@ class AIHandler:
         # Normalize destination text
         dest_normalized = destination_text.lower().strip()
         
-        # Remove common words
-        for word in ['a', 'verso', 'città', 'di']:
-            dest_normalized = dest_normalized.replace(word, '').strip()
+        # Remove common words more carefully (as whole words only)
+        import re
+        for word in ['\\ba\\b', '\\bverso\\b', '\\bcittà\\b', '\\bdi\\b', '\\bper\\b', '\\bsenza\\b', '\\bevitando\\b']:
+            dest_normalized = re.sub(word, '', dest_normalized).strip()
         
-        # Check for matches
+        # Clean up extra spaces
+        dest_normalized = re.sub(r'\s+', ' ', dest_normalized).strip()
+        
+        # Check for matches (more flexible matching)
         for city, coords in geocoding_db.items():
+            if city == dest_normalized:  # Exact match first
+                logging.info(f'[AIHandler] Geocoded "{destination_text}" to {city} (exact)')
+                return coords
             if city in dest_normalized or dest_normalized in city:
-                logging.info(f'[AIHandler] Geocoded "{destination_text}" to {city}')
+                logging.info(f'[AIHandler] Geocoded "{destination_text}" to {city} (partial)')
+                return coords
+            # Also check if destination starts with city name
+            if dest_normalized.startswith(city) or city.startswith(dest_normalized):
+                logging.info(f'[AIHandler] Geocoded "{destination_text}" to {city} (prefix)')
                 return coords
         
         logging.warning(f'[AIHandler] Could not geocode destination: {destination_text}')

@@ -22,8 +22,6 @@ FRANK è un assistente AI all-in-one, costruito su un Raspberry Pi 5, che si int
 4.  [**Stack Tecnologico**](#4-stack-tecnologico)
 5.  [**Design Language: L'Estetica "KITT"**](#5-design-language-lestetica-kitt)
 6.  [**Struttura del Codice**](#6-struttura-del-codice)
-7.  [**Roadmap Futura**](#7-roadmap-futura)
-
 ---
 
 ### **1. Visione del Progetto**
@@ -93,61 +91,32 @@ L'identità visiva di FRANK è un omaggio funzionale all'estetica retrofuturisti
 #### **Logo**
 > Logo tipografico basato sulla parola "FRANK". Il font è monospaziato e digitale, in rosso acceso su sfondo nero. La lettera "A" è un triangolo stilizzato, il cui trattino orizzontale è sostituito da una barra verticale più luminosa (la "I" di "AI") con un forte effetto "glow". L'intero logo presenta un leggero alone e deboli linee di scansione orizzontali per un effetto monitor CRT.
 
-### **6. Struttura del Codice**
+### 6. Struttura del Codice
 
-Il progetto è organizzato in una struttura modulare per facilitare lo sviluppo e la manutenzione.
+Struttura attuale del repository:
 
 ```
-.../
-│
-├── app.py                  # Entry point principale dell'applicazione
-├── config.ini              # File di configurazione
-├── requirements.txt        # Dipendenze Python
-│
-├── backend/                # Logica principale
-│   ├── main_controller.py    # Direttore d'orchestra
-│   ├── services/             # Moduli per GPS, OBD, DB, etc.
-│   └── ai/                   # Moduli per LLM, RAG, Parser di intenti
-│
-├── frontend/               # Interfaccia Grafica
-│   ├── templates/index.html
-│   └── static/ (css/, js/)
-│
-└── data/                   # Dati persistenti
-    ├── frank_database.db
-    └── documents/
+./
+├── app.py
+├── backend/
+│   ├── __init__.py
+│   ├── main_controller.py
+│   └── core/
+│       ├── __init__.py
+│       ├── command_processor.py
+│       ├── communication_handler.py
+│       ├── connection_manager.py
+│       └── main_controller.py
+├── frontend/
+│   ├── templates/
+│   │   ├── user.html
+│   │   └── debug.html
+│   └── static/
+│       ├── css/
+│       │   ├── user.css
+│       │   └── debug.css
+│       └── js/
+│           ├── user.js
+│           └── debug.js
+└── README.md
 ```
-
-### **7. Roadmap Futura**
-
-*   [ ] **Integrazione GPIO Completa:** Controllo diretto delle utenze del camper (luci, pompa dell'acqua, riscaldamento) tramite comandi vocali.
-*   [ ] **Integrazione Telecamera:** Utilizzo di una telecamera per funzioni di dashcam o riconoscimento di oggetti.
-*   [ ] **Personalizzazione Avanzata della Voce:** Implementazione di clonazione vocale per una personalizzazione ancora maggiore.
-*   [ ] **Modalità Sentinella:** Funzionalità di monitoraggio del veicolo a camper fermo.
-
----
-
-### 8. Eventi WebSocket e Contratti
-
-Questa sezione definisce i contratti degli eventi WebSocket usati tra frontend e backend, in linea con il pattern “Frontend → app.py → main_controller.py → Services”.
-
-- Canale: Socket.IO
-- Namespace: predefinito
-- Versioni consigliate:
-  - Client: socket.io 4.7.x
-  - Server: Flask-SocketIO 5.x
-
-Eventi dal Frontend al Backend
-- Evento: frontend_command
-  - Payload: { "data": string }
-  - Descrizione: invia un comando testuale o domanda generica.
-  - Esempio:
-    {
-      "data": "stato rete"
-    }
-
-Eventi dal Backend al Frontend
-- Evento: backend_response
-  - Payload: { "data": string }
-  - Descrizione: messaggio semplice destinato al log UI.
-  - Note: il backend può emettere più messaggi consecutivi per lo stesso comando.

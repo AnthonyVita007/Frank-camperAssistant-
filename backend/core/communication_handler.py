@@ -10,6 +10,8 @@ from typing import Dict, Any, Optional, Callable
 from flask_socketio import SocketIO, emit
 
 from .command_processor import CommandProcessor, CommandResult
+from ..ai.ai_handler import AIHandler
+from ..ai.ai_response import AIResponse
 
 
 class CommunicationHandler:
@@ -18,25 +20,28 @@ class CommunicationHandler:
     
     This class manages the bidirectional communication flow:
     - Receives messages from clients
-    - Routes messages to appropriate processors
+    - Routes messages to appropriate processors (commands or AI)
     - Sends responses back to clients
     - Manages different types of communication events
     
     Attributes:
         _socketio_instance (SocketIO): The Flask-SocketIO instance
         _command_processor (CommandProcessor): Processor for handling commands
+        _ai_handler (AIHandler): Handler for AI requests
     """
     
-    def __init__(self, socketio_instance: SocketIO, command_processor: CommandProcessor) -> None:
+    def __init__(self, socketio_instance: SocketIO, command_processor: CommandProcessor, ai_handler: AIHandler) -> None:
         """
         Initialize the CommunicationHandler.
         
         Args:
             socketio_instance (SocketIO): The Flask-SocketIO instance
             command_processor (CommandProcessor): The command processor instance
+            ai_handler (AIHandler): The AI handler instance
         """
         self._socketio_instance = socketio_instance
         self._command_processor = command_processor
+        self._ai_handler = ai_handler
         self._setup_communication_handlers()
         
         logging.debug('[CommunicationHandler] Communication handler initialized')
@@ -55,34 +60,39 @@ class CommunicationHandler:
     
     def _handle_frontend_command(self, json_data: Optional[Dict[str, Any]]) -> None:
         """
-        Handle a command received from the frontend.
+        Handle a request received from the frontend.
         
-        This method processes commands sent by the frontend client,
-        validates the input, processes the command, and sends an appropriate response.
+        This method processes both commands and AI requests sent by the frontend client,
+        validates the input, routes to appropriate processor, and sends responses.
         
         Args:
             json_data (Optional[Dict[str, Any]]): The JSON data received from frontend
         """
         try:
-            # Extract and validate the command
-            command = self._extract_command(json_data)
-            if command is None:
-                self._send_error_response('Comando non valido o vuoto')
+            # Extract and validate the input
+            user_input = self._extract_command(json_data)
+            if user_input is None:
+                self._send_error_response('Richiesta non valida o vuota')
                 return
             
-            logging.info(f'[CommunicationHandler] Received command: "{command}"')
+            logging.info(f'[CommunicationHandler] Received input: "{user_input}"')
             
-            # Process the command
-            result, is_recognized = self._command_processor.process_command(command)
-            
-            # Send appropriate response based on the result
-            if is_recognized:
-                self._send_command_response(result)
+            # Determine if this is a command or AI request
+            if self._is_command(user_input):
+                # Process as command
+                result, is_recognized = self._command_processor.process_command(user_input)
+                
+                if is_recognized:
+                    self._send_command_response(result)
+                else:
+                    self._send_error_response(result.data)
             else:
-                self._send_error_response(result.data)
+                # Process as AI request
+                ai_response = self._ai_handler.handle_ai_request(user_input)
+                self._send_ai_response(ai_response)
                 
         except Exception as e:
-            logging.error(f'[CommunicationHandler] Error handling frontend command: {e}')
+            logging.error(f'[CommunicationHandler] Error handling frontend request: {e}')
             self._send_error_response('Errore interno del server')
     
     def _extract_command(self, json_data: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -155,6 +165,54 @@ class CommunicationHandler:
             logging.debug(f'[CommunicationHandler] Sent error response: {error_message}')
         except Exception as e:
             logging.error(f'[CommunicationHandler] Failed to send error response: {e}')
+    
+    def _is_command(self, user_input: str) -> bool:
+        """
+        Determine if the user input is a command or an AI request.
+        
+        Commands are identified by starting with '/' character.
+        
+        Args:
+            user_input (str): The user input to check
+            
+        Returns:
+            bool: True if this is a command, False if it's an AI request
+        """
+        if not user_input or not isinstance(user_input, str):
+            return False
+        
+        return user_input.strip().startswith('/')
+    
+    def _send_ai_response(self, ai_response: AIResponse) -> None:
+        """
+        Send an AI response to the client.
+        
+        Args:
+            ai_response (AIResponse): The AI response to send
+        """
+        try:
+            if ai_response.success:
+                # Send successful AI response
+                emit('backend_response', {
+                    'data': ai_response.text,
+                    'type': 'ai_response',
+                    'response_type': ai_response.response_type,
+                    'metadata': ai_response.metadata,
+                    'suggested_actions': ai_response.suggested_actions
+                })
+                logging.debug(f'[CommunicationHandler] Sent AI response: {ai_response.text[:100]}...')
+            else:
+                # Send AI error response
+                emit('backend_response', {
+                    'data': ai_response.text,
+                    'type': 'ai_error',
+                    'response_type': ai_response.response_type
+                })
+                logging.debug(f'[CommunicationHandler] Sent AI error response: {ai_response.text}')
+                
+        except Exception as e:
+            logging.error(f'[CommunicationHandler] Error sending AI response: {e}')
+            self._send_error_response('Errore nell\'invio della risposta AI')
     
     def send_message_to_client(self, event: str, data: Dict[str, Any]) -> bool:
         """

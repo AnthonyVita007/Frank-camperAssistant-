@@ -17,7 +17,8 @@
 
     <!-- WORKSPACE CENTRALE SCROLLABILE -->
     <main class="workspace-scrollable">
-        <div class="tiles-grid">
+        <!-- TILES GRID (default view) -->
+        <div class="tiles-grid" id="tiles-grid">
             <button class="app-tile" id="tile-vehicle" title="Stato veicolo">
                 <div class="tile-icon">▣</div>
                 <div class="tile-label">Stato veicolo</div>
@@ -52,6 +53,16 @@
                 <div class="tile-label">Test 2</div>
             </button>
         </div>
+
+        <!-- NAVIGATION CONTAINER (hidden by default) -->
+        <div id="nav-container" class="nav-container" style="display: none;">
+            <div class="nav-header">
+                <div class="nav-title">Navigazione</div>
+                <button id="nav-close-btn" class="nav-close-btn">✕</button>
+            </div>
+            <div id="map" class="map-root"></div>
+            <div id="nav-warnings" class="nav-warnings"></div>
+        </div>
     </main>
 
     <!-- FOOTER FISSO -->
@@ -64,6 +75,9 @@
 
     <!-- Scripts -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- Leaflet for maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="{{ url_for('static', filename='js/user.js') }}"></script>
 
 </body>

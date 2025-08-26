@@ -201,6 +201,11 @@ class CommunicationHandler:
                     'suggested_actions': ai_response.suggested_actions
                 })
                 logging.debug(f'[CommunicationHandler] Sent AI response: {ai_response.text[:100]}...')
+                
+                # Handle navigation actions
+                if ai_response.metadata and ai_response.metadata.get('action') == 'open_navigator':
+                    self._handle_navigation_action(ai_response.metadata)
+                    
             else:
                 # Send AI error response
                 emit('backend_response', {
@@ -213,6 +218,38 @@ class CommunicationHandler:
         except Exception as e:
             logging.error(f'[CommunicationHandler] Error sending AI response: {e}')
             self._send_error_response('Errore nell\'invio della risposta AI')
+    
+    def _handle_navigation_action(self, metadata: Dict[str, Any]) -> None:
+        """
+        Handle navigation-specific actions based on AI response metadata.
+        
+        Args:
+            metadata (Dict[str, Any]): AI response metadata containing navigation action
+        """
+        try:
+            action = metadata.get('action')
+            
+            if action == 'open_navigator':
+                # Check if we're in debug mode (simple check - could be more sophisticated)
+                # For now, we'll emit both events and let the frontend decide
+                
+                # Emit navigation open action
+                emit('backend_action', {
+                    'action': 'open_navigator'
+                })
+                logging.info('[CommunicationHandler] Emitted open_navigator action')
+                
+                # Emit route data if available
+                route_payload = metadata.get('route_payload')
+                if route_payload:
+                    emit('backend_action', {
+                        'action': 'render_route',
+                        'data': route_payload
+                    })
+                    logging.info('[CommunicationHandler] Emitted render_route action')
+                    
+        except Exception as e:
+            logging.error(f'[CommunicationHandler] Error handling navigation action: {e}')
     
     def send_message_to_client(self, event: str, data: Dict[str, Any]) -> bool:
         """

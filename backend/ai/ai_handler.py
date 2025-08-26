@@ -6,10 +6,12 @@ managing AI request validation, processing coordination, and logging.
 """
 
 import logging
+import re
 from typing import Optional, Dict, Any
 
 from .ai_processor import AIProcessor
 from .ai_response import AIResponse
+from ..mcp.tools.navigation_tool import NavigationTool
 
 
 class AIHandler:
@@ -22,6 +24,7 @@ class AIHandler:
     Attributes:
         _ai_processor (AIProcessor): The AI processor instance
         _is_enabled (bool): Whether AI processing is enabled
+        _navigation_tool (NavigationTool): MCP navigation tool
     """
     
     def __init__(self, ai_processor: Optional[AIProcessor] = None) -> None:
@@ -32,6 +35,15 @@ class AIHandler:
             ai_processor (Optional[AIProcessor]): Custom AI processor instance.
                                                   If None, creates a default one.
         """
+        # Initialize MCP tools first (these should always work)
+        try:
+            self._navigation_tool = NavigationTool()
+            logging.debug('[AIHandler] Navigation tool initialized successfully')
+        except Exception as e:
+            logging.error(f'[AIHandler] Failed to initialize navigation tool: {e}')
+            self._navigation_tool = None
+        
+        # Initialize AI processor (this may fail if API key is missing)
         try:
             self._ai_processor = ai_processor or AIProcessor()
             self._is_enabled = self._ai_processor.is_available()
@@ -51,7 +63,7 @@ class AIHandler:
         Handle an AI request from the user.
         
         This method validates the input, processes the request through the AI processor,
-        and returns a structured response.
+        and returns a structured response. It also checks for MCP tool triggers.
         
         Args:
             user_input (str): The user's input text
@@ -69,6 +81,11 @@ class AIHandler:
                 success=False,
                 message="Invalid input"
             )
+        
+        # Check for navigation intent first
+        navigation_intent = self._detect_navigation_intent(user_input)
+        if navigation_intent:
+            return self._handle_navigation_request(navigation_intent, user_input)
         
         # Check if AI is available
         if not self._is_enabled or not self._ai_processor:
@@ -128,6 +145,197 @@ class AIHandler:
             return False
         
         return True
+    
+    def _detect_navigation_intent(self, user_input: str) -> Optional[Dict[str, Any]]:
+        """
+        Detect navigation intent in user input.
+        
+        Args:
+            user_input (str): The user input to analyze
+            
+        Returns:
+            Optional[Dict[str, Any]]: Navigation intent data if detected, None otherwise
+        """
+        input_lower = user_input.lower().strip()
+        
+        # Navigation trigger patterns
+        navigation_patterns = [
+            r'(?:vai|portami|naviga|dirigiti|porta)\s+(?:a|verso)\s+(.+?)(?:\s+evitando|\s+senza|$)',
+            r'(?:apri|avvia|attiva)\s+(?:il\s+)?navigatore',
+            r'(?:come\s+)?(?:arrivo|arrivare)\s+(?:a|verso)\s+(.+?)(?:\s+evitando|\s+senza|$)',
+            r'(?:strada|percorso|rotta)\s+(?:per|verso|a)\s+(.+?)(?:\s+evitando|\s+senza|$)',
+            r'(?:dove\s+)?(?:è|si trova)\s+(.+)',
+            r'navigazione\s+(?:per|verso|a)\s+(.+?)(?:\s+evitando|\s+senza|$)'
+        ]
+        
+        for pattern in navigation_patterns:
+            match = re.search(pattern, input_lower)
+            if match:
+                # Extract destination
+                destination_text = match.group(1) if match.groups() else None
+                
+                # Extract preferences
+                preferences = self._extract_navigation_preferences(input_lower)
+                
+                return {
+                    'destination_text': destination_text,
+                    'preferences': preferences,
+                    'original_input': user_input
+                }
+        
+        return None
+    
+    def _extract_navigation_preferences(self, user_input: str) -> Dict[str, bool]:
+        """
+        Extract navigation preferences from user input.
+        
+        Args:
+            user_input (str): The user input to analyze
+            
+        Returns:
+            Dict[str, bool]: Extracted preferences
+        """
+        preferences = {}
+        
+        # Check for toll avoidance
+        if any(term in user_input for term in ['evita pedaggi', 'senza pedaggi', 'non pedaggi']):
+            preferences['avoid_tolls'] = True
+        
+        # Check for highway avoidance
+        if any(term in user_input for term in ['evita autostrade', 'senza autostrade', 'strade statali']):
+            preferences['avoid_motorways'] = True
+        
+        # Check for ferry avoidance
+        if any(term in user_input for term in ['evita traghetti', 'senza traghetti']):
+            preferences['avoid_ferries'] = True
+        
+        return preferences
+    
+    def _handle_navigation_request(self, navigation_intent: Dict[str, Any], original_input: str) -> AIResponse:
+        """
+        Handle a navigation request using the MCP navigation tool.
+        
+        Args:
+            navigation_intent (Dict[str, Any]): Navigation intent data
+            original_input (str): Original user input
+            
+        Returns:
+            AIResponse: Navigation response with action metadata
+        """
+        logging.info(f'[AIHandler] Handling navigation request: {navigation_intent}')
+        
+        try:
+            # For MVP, use geocoding fallback for common Italian cities
+            destination_coords = self._simple_geocode(navigation_intent.get('destination_text', ''))
+            
+            if not destination_coords:
+                return AIResponse(
+                    text=f"Mi dispiace, non riesco a trovare la destinazione '{navigation_intent.get('destination_text', '')}'.",
+                    response_type='error',
+                    success=False,
+                    message="Destination not found"
+                )
+            
+            # Prepare navigation parameters
+            nav_params = {
+                'destination': destination_coords,
+                'preferences': navigation_intent.get('preferences', {})
+            }
+            
+            # Execute navigation tool
+            if self._navigation_tool:
+                tool_result = self._navigation_tool.execute(nav_params)
+                
+                if tool_result.success:
+                    # Create AI response with navigation action
+                    response_text = f"Imposto il percorso verso {destination_coords.get('address', 'destinazione')}. " + tool_result.message
+                    
+                    return AIResponse(
+                        text=response_text,
+                        response_type='navigation',
+                        success=True,
+                        metadata={
+                            'action': 'open_navigator',
+                            'route_payload': tool_result.data
+                        }
+                    )
+                else:
+                    return AIResponse(
+                        text=f"Mi dispiace, non riesco a calcolare il percorso: {tool_result.message}",
+                        response_type='error',
+                        success=False,
+                        message=tool_result.message
+                    )
+            else:
+                return AIResponse(
+                    text="Mi dispiace, il sistema di navigazione non è disponibile.",
+                    response_type='error',
+                    success=False,
+                    message="Navigation tool not available"
+                )
+                
+        except Exception as e:
+            logging.error(f'[AIHandler] Navigation request failed: {e}')
+            return AIResponse(
+                text="Mi dispiace, si è verificato un errore durante il calcolo del percorso.",
+                response_type='error',
+                success=False,
+                message=f"Navigation error: {str(e)}"
+            )
+    
+    def _simple_geocode(self, destination_text: str) -> Optional[Dict[str, Any]]:
+        """
+        Simple geocoding for common Italian destinations (MVP fallback).
+        
+        Args:
+            destination_text (str): Destination text to geocode
+            
+        Returns:
+            Optional[Dict[str, Any]]: Coordinates if found
+        """
+        if not destination_text:
+            return None
+        
+        # Simple geocoding database for common Italian cities
+        geocoding_db = {
+            'roma': {'lat': 41.9028, 'lon': 12.4964, 'address': 'Roma, Italia'},
+            'milano': {'lat': 45.4642, 'lon': 9.1900, 'address': 'Milano, Italia'},
+            'napoli': {'lat': 40.8518, 'lon': 14.2681, 'address': 'Napoli, Italia'},
+            'firenze': {'lat': 43.7696, 'lon': 11.2558, 'address': 'Firenze, Italia'},
+            'venezia': {'lat': 45.4408, 'lon': 12.3155, 'address': 'Venezia, Italia'},
+            'torino': {'lat': 45.0703, 'lon': 7.6869, 'address': 'Torino, Italia'},
+            'bologna': {'lat': 44.4949, 'lon': 11.3426, 'address': 'Bologna, Italia'},
+            'genova': {'lat': 44.4056, 'lon': 8.9463, 'address': 'Genova, Italia'},
+            'palermo': {'lat': 38.1157, 'lon': 13.3615, 'address': 'Palermo, Italia'},
+            'bari': {'lat': 41.1171, 'lon': 16.8719, 'address': 'Bari, Italia'}
+        }
+        
+        # Normalize destination text
+        dest_normalized = destination_text.lower().strip()
+        
+        # Remove common words more carefully (as whole words only)
+        import re
+        for word in ['\\ba\\b', '\\bverso\\b', '\\bcittà\\b', '\\bdi\\b', '\\bper\\b', '\\bsenza\\b', '\\bevitando\\b']:
+            dest_normalized = re.sub(word, '', dest_normalized).strip()
+        
+        # Clean up extra spaces
+        dest_normalized = re.sub(r'\s+', ' ', dest_normalized).strip()
+        
+        # Check for matches (more flexible matching)
+        for city, coords in geocoding_db.items():
+            if city == dest_normalized:  # Exact match first
+                logging.info(f'[AIHandler] Geocoded "{destination_text}" to {city} (exact)')
+                return coords
+            if city in dest_normalized or dest_normalized in city:
+                logging.info(f'[AIHandler] Geocoded "{destination_text}" to {city} (partial)')
+                return coords
+            # Also check if destination starts with city name
+            if dest_normalized.startswith(city) or city.startswith(dest_normalized):
+                logging.info(f'[AIHandler] Geocoded "{destination_text}" to {city} (prefix)')
+                return coords
+        
+        logging.warning(f'[AIHandler] Could not geocode destination: {destination_text}')
+        return None
     
     def is_ai_enabled(self) -> bool:
         """

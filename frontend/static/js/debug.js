@@ -13,16 +13,36 @@ const sendBtn = document.getElementById('send-button');
 
 // helper: append al log con autoscroll
 //connessione
-function appendLog(message, origin = 'system') {
-    //...
-    const line = document.createElement('div');
-    //...
-    const prefix = origin === 'user' ? 'Tu' : origin === 'backend' ? 'Frank' : 'Sistema';
-    //...
-    line.textContent = `[${prefix}] ${message}`;
-    //...
-    logContainer.appendChild(line);
-    //...
+function appendLog(message, origin = 'system', renderMarkdown = false) {
+    // Create chat wrapper
+    const wrapper = document.createElement('div');
+    wrapper.className = 'chat';
+
+    // Create bubble element
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble ' + (
+        origin === 'user' ? 'bubble-user' :
+        origin === 'backend' ? 'bubble-backend' : 'bubble-system'
+    );
+
+    // Handle content rendering
+    if (renderMarkdown && typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+        try {
+            const html = marked.parse(String(message || ''));
+            bubble.innerHTML = DOMPurify.sanitize(html);
+        } catch (error) {
+            console.warn('[Debug] Markdown rendering failed, using plain text:', error);
+            bubble.textContent = String(message || '');
+        }
+    } else {
+        bubble.textContent = String(message || '');
+    }
+
+    // Append to DOM
+    wrapper.appendChild(bubble);
+    logContainer.appendChild(wrapper);
+    
+    // Auto-scroll to bottom
     logContainer.scrollTop = logContainer.scrollHeight;
 }
 
@@ -67,8 +87,9 @@ socket.on('connect', () => {
 socket.on('backend_response', (payload) => {
     //...
     const msg = payload && payload.data ? payload.data : '(risposta vuota)';
+    const isAI = payload && payload.type === 'ai_response';
     //...
-    appendLog(msg, 'backend');
+    appendLog(msg, 'backend', !!isAI);
 });
 
 // azioni strutturate dal backend

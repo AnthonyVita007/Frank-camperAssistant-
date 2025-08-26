@@ -19,7 +19,7 @@ VARIABILI, FONT E RESET BASE
   --scanline: rgba(255, 255, 255, 0.035);
 
   --console-font: 'VT323', Consolas, Menlo, Monaco, "Courier New", monospace;
-  --base-font-size: 18px;
+  --base-font-size: 20px;
 }
 
 /*----------------------------------------------------------------
@@ -108,8 +108,8 @@ LOG CONTAINER
 
   /* tipografia base */
   font-family: var(--console-font);
-  font-size: clamp(16px, 2.5vh, 24px);
-  line-height: 1.5;
+  font-size: clamp(18px, 2.8vh, 26px);
+  line-height: 1.6;
 
   /* effetto schermo incavato */
   position: relative;
@@ -170,6 +170,94 @@ LOG CONTAINER
 }
 
 /*----------------------------------------------------------------
+CHAT BUBBLE STYLES
+----------------------------------------------------------------*/
+.chat {
+  display: flex;
+  margin: 10px 0;
+}
+
+.bubble {
+  max-width: 80ch;
+  padding: 12px 16px;
+  border-radius: 12px;
+  line-height: 1.6;
+  box-shadow:
+    0 0 10px rgba(255, 255, 255, 0.06),
+    inset 0 0 12px rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  word-wrap: break-word;
+  font-family: var(--console-font);
+  font-size: inherit;
+}
+
+.bubble-user {
+  margin-left: auto;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--green);
+  text-shadow: 0 0 6px rgba(0, 255, 102, 0.35);
+  border-color: rgba(0, 255, 102, 0.25);
+}
+
+.bubble-backend {
+  margin-right: auto;
+  background: rgba(20, 0, 0, 0.65);
+  color: var(--white);
+  text-shadow: 0 0 6px rgba(255, 0, 0, 0.35);
+  border-color: rgba(255, 0, 0, 0.25);
+}
+
+.bubble-system {
+  margin: 0 auto;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--white);
+  border-color: rgba(255, 255, 255, 0.12);
+  opacity: 0.8;
+  font-size: 0.9em;
+}
+
+/* Markdown content styling within bubbles */
+.bubble h1, .bubble h2, .bubble h3, .bubble h4, .bubble h5, .bubble h6 {
+  margin: 0.5em 0;
+  color: inherit;
+  font-family: inherit;
+}
+
+.bubble ul, .bubble ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.bubble code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: var(--console-font);
+}
+
+.bubble pre {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 8px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.bubble pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.bubble a {
+  color: var(--cyan);
+  text-decoration: underline;
+}
+
+.bubble a:hover {
+  text-shadow: 0 0 6px rgba(0, 255, 255, 0.5);
+}
+
+/*----------------------------------------------------------------
 SCROLLBAR LOG
 ----------------------------------------------------------------*/
 #log-container::-webkit-scrollbar {
@@ -226,7 +314,7 @@ CAMPO DI TESTO
   caret-color: var(--green);
   text-shadow: 0 0 6px rgba(0, 255, 102, 0.45);
   font-family: var(--console-font);
-  font-size: clamp(16px, 2.6vh, 22px);
+  font-size: clamp(18px, 2.8vh, 24px);
   letter-spacing: 0.02em;
   animation: input-glow 2.2s ease-in-out infinite;
 }

@@ -11,6 +11,7 @@ from flask_socketio import SocketIO
 from .connection_manager import ConnectionManager
 from .command_processor import CommandProcessor  
 from .communication_handler import CommunicationHandler
+from ..ai.ai_handler import AIHandler
 
 
 class MainController:
@@ -21,6 +22,7 @@ class MainController:
     backend system. It initializes and manages all core components:
     - Connection management
     - Command processing
+    - AI request handling
     - Communication handling
     
     The controller follows the Single Responsibility Principle by delegating
@@ -30,6 +32,7 @@ class MainController:
         _socketio_instance (SocketIO): The Flask-SocketIO instance
         _connection_manager (ConnectionManager): Manages WebSocket connections
         _command_processor (CommandProcessor): Processes user commands
+        _ai_handler (AIHandler): Handles AI requests
         _communication_handler (CommunicationHandler): Handles client-server communication
     """
     
@@ -64,14 +67,19 @@ class MainController:
             self._command_processor = CommandProcessor()
             logging.debug('[MainController] Command processor initialized')
             
+            # Initialize AI handler (no dependencies)
+            self._ai_handler = AIHandler()
+            logging.debug('[MainController] AI handler initialized')
+            
             # Initialize connection manager (depends on SocketIO)
             self._connection_manager = ConnectionManager(self._socketio_instance)
             logging.debug('[MainController] Connection manager initialized')
             
-            # Initialize communication handler (depends on SocketIO and CommandProcessor)
+            # Initialize communication handler (depends on SocketIO, CommandProcessor, and AIHandler)
             self._communication_handler = CommunicationHandler(
                 self._socketio_instance, 
-                self._command_processor
+                self._command_processor,
+                self._ai_handler
             )
             logging.debug('[MainController] Communication handler initialized')
             
@@ -106,6 +114,15 @@ class MainController:
         """
         return self._communication_handler
     
+    def get_ai_handler(self) -> AIHandler:
+        """
+        Get the AI handler instance.
+        
+        Returns:
+            AIHandler: The AI handler managing AI requests
+        """
+        return self._ai_handler
+    
     def get_system_status(self) -> dict:
         """
         Get the current status of all system components.
@@ -124,6 +141,7 @@ class MainController:
                     'status': 'active',
                     'available_commands': list(self._command_processor.get_available_commands().keys())
                 },
+                'ai_handler': self._ai_handler.get_ai_status(),
                 'communication_handler': {
                     'status': 'active',
                     'available_events': list(self._communication_handler.get_available_events().keys())

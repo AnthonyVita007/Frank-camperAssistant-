@@ -13,7 +13,7 @@ class AIResponse:
     """
     Represents the result of processing an AI request.
     
-    This class encapsulates the outcome of AI processing using Google Gemini,
+    This class encapsulates the outcome of AI processing,
     including the response text, metadata, and any suggested actions.
     
     Attributes:

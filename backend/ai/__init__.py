@@ -1,7 +1,7 @@
 """
 AI Module for Frank Camper Assistant.
 
-This module provides artificial intelligence capabilities using Google Gemini API
+This module provides artificial intelligence capabilities using Ollama
 for processing non-command text inputs from users.
 """
 

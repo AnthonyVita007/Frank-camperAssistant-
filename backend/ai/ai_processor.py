@@ -1,7 +1,7 @@
 """
 AI Processor Module for Frank Camper Assistant.
 
-This module handles the communication with Ollama local LLM to process
+This module handles the communication with llama.cpp local server to process
 user requests and generate appropriate responses.
 """
 
@@ -16,13 +16,13 @@ from .ai_response import AIResponse
 
 class AIProcessor:
     """
-    Processes AI requests using Ollama local server.
+    Processes AI requests using llama.cpp local server.
     
-    This class manages the communication with Ollama local server running at localhost:11434,
+    This class manages the communication with llama.cpp local server running at 127.0.0.1:8080,
     handles errors, implements retry logic, and generates structured responses.
     
     Attributes:
-        _ollama_url (str): The base URL for the Ollama API endpoint
+        _llamacpp_url (str): The base URL for the llama.cpp API endpoint
         _model_name (str): Name of the local model to use
         _max_retries (int): Maximum number of retry attempts
         _timeout (float): Request timeout in seconds
@@ -31,69 +31,112 @@ class AIProcessor:
     
     def __init__(
         self,
-        ollama_url: str = "http://localhost:11434/api/chat",
+        llamacpp_url: str = "http://127.0.0.1:8080/completion",
         model_name: str = "phi3:mini",
         max_retries: int = 3,
-        timeout: float = 30.0
+        timeout: float = 60.0  # Aumentato timeout per llama.cpp
     ) -> None:
         """
-        Initialize the AIProcessor with Ollama configuration.
+        Initialize the AIProcessor with llama.cpp configuration.
         
         Args:
-            ollama_url (str): URL for Ollama API endpoint (default: "http://localhost:11434/api/chat")
+            llamacpp_url (str): URL for llama.cpp API endpoint (default: "http://127.0.0.1:8080/completion")
             model_name (str): Name of the local model (default: "phi3:mini")
             max_retries (int): Maximum retry attempts (default: 3)
-            timeout (float): Request timeout in seconds (default: 30.0)
+            timeout (float): Request timeout in seconds (default: 60.0)
         """
-        self._ollama_url = ollama_url
+        #----------------------------------------------------------------
+        # INIZIALIZZAZIONE CONFIGURAZIONE LLAMA.CPP
+        #----------------------------------------------------------------
+        self._llamacpp_url = llamacpp_url
         self._model_name = model_name
         self._max_retries = max_retries
         self._timeout = timeout
         
+        #----------------------------------------------------------------
+        # CONFIGURAZIONE SESSIONE HTTP OTTIMIZZATA
+        #----------------------------------------------------------------
         # Create a persistent HTTP session for better performance
         self._session = requests.Session()
         self._session.headers.update({
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'Connection': 'keep-alive'
         })
         
+        # Configurazione adapter per connection pooling ottimizzato
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
+        # Strategia di retry a livello HTTP
+        retry_strategy = Retry(
+            total=0,  # Gestiamo i retry manualmente
+            backoff_factor=0,
+            status_forcelist=[]
+        )
+        
+        adapter = HTTPAdapter(
+            pool_connections=1,
+            pool_maxsize=1,
+            max_retries=retry_strategy
+        )
+        
+        self._session.mount("http://", adapter)
+        self._session.mount("https://", adapter)
+        
+        #----------------------------------------------------------------
+        # TEST CONNESSIONE INIZIALE
+        #----------------------------------------------------------------
         # Test connection during initialization
         self._is_available = self._test_connection()
         
         if self._is_available:
-            logging.info(f'[AIProcessor] Ollama AI processor initialized successfully with model: {model_name}')
+            logging.info(f'[AIProcessor] llama.cpp AI processor initialized successfully with model: {model_name}')
         else:
-            logging.warning(f'[AIProcessor] Ollama AI processor initialized but connection to {ollama_url} failed')
+            logging.warning(f'[AIProcessor] llama.cpp AI processor initialized but connection to {llamacpp_url} failed')
     
     def _test_connection(self) -> bool:
         """
-        Test connection to Ollama server.
+        Test connection to llama.cpp server with optimized health check.
         
         Returns:
             bool: True if connection is successful, False otherwise
         """
         try:
-            # Test with a simple health check to the base URL
-            health_url = self._ollama_url.replace('/api/chat', '/api/tags')
-            response = self._session.get(health_url, timeout=5)
+            #----------------------------------------------------------------
+            # TEST HEALTH CHECK SEMPLIFICATO
+            #----------------------------------------------------------------
+            # Test with a minimal completion request optimized for speed
+            test_payload = {
+                "prompt": "Hi",
+                "n_predict": 5,
+                "temperature": 0.1,
+                "stop": ["\n"]
+            }
+            
+            response = self._session.post(
+                self._llamacpp_url,
+                json=test_payload,
+                timeout=10  # Timeout ridotto per test
+            )
             
             if response.status_code == 200:
-                logging.debug('[AIProcessor] Ollama server connection test successful')
+                logging.debug('[AIProcessor] llama.cpp server connection test successful')
                 return True
             else:
-                logging.warning(f'[AIProcessor] Ollama server returned status code: {response.status_code}')
+                logging.warning(f'[AIProcessor] llama.cpp server returned status code: {response.status_code}')
                 return False
                 
         except requests.exceptions.RequestException as e:
-            logging.warning(f'[AIProcessor] Failed to connect to Ollama server: {e}')
+            logging.warning(f'[AIProcessor] Failed to connect to llama.cpp server: {e}')
             return False
         except Exception as e:
-            logging.error(f'[AIProcessor] Unexpected error testing Ollama connection: {e}')
+            logging.error(f'[AIProcessor] Unexpected error testing llama.cpp connection: {e}')
             return False
     
     def process_request(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> AIResponse:
         """
-        Process a user request using Ollama local LLM.
+        Process a user request using llama.cpp local LLM.
         
         Args:
             user_input (str): The user's input text
@@ -102,6 +145,9 @@ class AIProcessor:
         Returns:
             AIResponse: The structured AI response
         """
+        #----------------------------------------------------------------
+        # VALIDAZIONE INPUT UTENTE
+        #----------------------------------------------------------------
         if not user_input or not isinstance(user_input, str):
             logging.warning('[AIProcessor] Received empty or invalid user input')
             return AIResponse(
@@ -123,37 +169,51 @@ class AIProcessor:
         
         logging.info(f'[AIProcessor] Processing user request: "{user_input[:100]}..."')
         
-        # Check if Ollama is available
+        #----------------------------------------------------------------
+        # VERIFICA DISPONIBILITÀ LLAMA.CPP
+        #----------------------------------------------------------------
+        # Check if llama.cpp is available
         if not self._is_available:
-            logging.error('[AIProcessor] Ollama server not available')
+            logging.error('[AIProcessor] llama.cpp server not available')
             return AIResponse(
-                text="Mi dispiace, il sistema AI locale non è disponibile al momento. Verifica che Ollama sia in esecuzione.",
+                text="Mi dispiace, il sistema AI locale non è disponibile al momento. Verifica che llama.cpp sia in esecuzione.",
                 response_type='error',
                 success=False,
-                message="Ollama server not available"
+                message="llama.cpp server not available"
             )
         
+        #----------------------------------------------------------------
+        # ELABORAZIONE CON LOGICA DI RETRY OTTIMIZZATA
+        #----------------------------------------------------------------
         # Process the request with retry logic
         for attempt in range(self._max_retries):
             try:
-                # Prepare the messages for Ollama
-                messages = self._prepare_messages(user_input, context)
+                # Prepare the prompt for llama.cpp
+                formatted_prompt = self._prepare_prompt(user_input, context)
                 
-                # Make request to Ollama
-                response_text = self._make_ollama_request(messages)
+                # Make request to llama.cpp
+                response_text = self._make_llamacpp_request(formatted_prompt)
                 
                 if response_text:
                     return self._create_success_response(response_text, user_input, context)
                 else:
-                    logging.warning(f'[AIProcessor] Empty response from Ollama (attempt {attempt + 1})')
+                    logging.warning(f'[AIProcessor] Empty response from llama.cpp (attempt {attempt + 1})')
                     if attempt < self._max_retries - 1:
-                        time.sleep(1)  # Wait before retry
+                        time.sleep(2)  # Pausa più lunga per llama.cpp
                         continue
                     else:
                         return self._create_error_response("Nessuna risposta ricevuta dall'AI locale")
                         
+            except requests.exceptions.Timeout as e:
+                logging.error(f'[AIProcessor] Timeout in llama.cpp request (attempt {attempt + 1}): {e}')
+                if attempt < self._max_retries - 1:
+                    time.sleep(3 + (attempt * 2))  # Backoff più aggressivo
+                    continue
+                else:
+                    return self._create_error_response(f"Timeout nella comunicazione con l'AI locale: {str(e)}")
+                    
             except requests.exceptions.RequestException as e:
-                logging.error(f'[AIProcessor] Network error in Ollama request (attempt {attempt + 1}): {e}')
+                logging.error(f'[AIProcessor] Network error in llama.cpp request (attempt {attempt + 1}): {e}')
                 if attempt < self._max_retries - 1:
                     time.sleep(2 ** attempt)  # Exponential backoff
                     continue
@@ -161,7 +221,7 @@ class AIProcessor:
                     return self._create_error_response(f"Errore di rete nella comunicazione con l'AI locale: {str(e)}")
                     
             except Exception as e:
-                logging.error(f'[AIProcessor] Unexpected error in Ollama request (attempt {attempt + 1}): {e}')
+                logging.error(f'[AIProcessor] Unexpected error in llama.cpp request (attempt {attempt + 1}): {e}')
                 if attempt < self._max_retries - 1:
                     time.sleep(2 ** attempt)  # Exponential backoff
                     continue
@@ -171,87 +231,98 @@ class AIProcessor:
         # This should never be reached, but just in case
         return self._create_error_response("Errore sconosciuto nel processamento della richiesta")
     
-    def _prepare_messages(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> list:
+    def _prepare_prompt(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> str:
         """
-        Prepare messages array for Ollama chat API.
+        Prepare prompt text for llama.cpp completion API with optimized structure.
         
         Args:
             user_input (str): The user's input
             context (Optional[Dict[str, Any]]): Additional context
             
         Returns:
-            list: Array of messages formatted for Ollama
+            str: Formatted prompt for llama.cpp
         """
-        # Base system message for Frank
-        system_message = """Sei Frank, un assistente AI per camper e viaggiatori. 
-        Rispondi sempre in italiano in modo cordiale e utile.
-        Sei specializzato nel fornire informazioni e consigli per viaggi in camper, 
-        ma puoi rispondere anche a domande generali.
-        Mantieni un tono amichevole e professionale.
-        Puoi scrivere le risposte usando markdown per formattare il testo, se necessario.
-        Le tue risposte devono essere concise ma informative."""
+        #----------------------------------------------------------------
+        # COSTRUZIONE PROMPT OTTIMIZZATO PER LLAMA.CPP
+        #----------------------------------------------------------------
+        # Base system message for Frank - ottimizzato per brevità
+        system_message = """Sei Frank, assistente AI per viaggi in camper.
+Rispondi in italiano, sii cordiale e conciso.
+Specialista in viaggi e camper, ma rispondi anche a domande generali.
+
+"""
         
         # Add context if provided
         if context:
-            system_message += f"\n\nContesto aggiuntivo: {context}"
+            system_message += f"Contesto: {context}\n\n"
         
-        # Prepare messages array
-        messages = [
-            {
-                "role": "system",
-                "content": system_message
-            },
-            {
-                "role": "user", 
-                "content": user_input
-            }
-        ]
+        # Format the complete prompt con stop tokens chiari
+        formatted_prompt = f"{system_message}Utente: {user_input}\n\nFrank:"
         
-        return messages
+        return formatted_prompt
     
-    def _make_ollama_request(self, messages: list) -> Optional[str]:
+    def _make_llamacpp_request(self, prompt: str) -> Optional[str]:
         """
-        Make a request to Ollama chat API.
+        Make a request to llama.cpp completion API with optimized parameters.
         
         Args:
-            messages (list): Messages array for the conversation
+            prompt (str): The formatted prompt for completion
             
         Returns:
-            Optional[str]: The response text from Ollama, or None if failed
+            Optional[str]: The response text from llama.cpp, or None if failed
         """
+        #----------------------------------------------------------------
+        # CONFIGURAZIONE PAYLOAD OTTIMIZZATO PER LLAMA.CPP
+        #----------------------------------------------------------------
         payload = {
-            "model": self._model_name,
-            "messages": messages,
+            "prompt": prompt,
+            "n_predict": 512,  # Ridotto per risposte più veloci
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "top_k": 40,
+            "repeat_penalty": 1.15,  # Aumentato per evitare ripetizioni
+            "repeat_last_n": 128,
+            "stop": ["\nUtente:", "\n\nUtente:", "Utente:", "\n\n"],
             "stream": False,
-            "options": {
-                "temperature": 0.7,
-                "top_p": 0.8,
-                "top_k": 40,
-                "num_predict": 2048
-            }
+            "cache_prompt": True  # Abilita cache se supportata
         }
         
         try:
-            logging.debug(f'[AIProcessor] Sending request to Ollama: {self._ollama_url}')
+            logging.debug(f'[AIProcessor] Sending request to llama.cpp: {self._llamacpp_url}')
+            
+            #----------------------------------------------------------------
+            # INVIO RICHIESTA HTTP CON MONITORING TEMPO
+            #----------------------------------------------------------------
+            start_time = time.time()
             
             response = self._session.post(
-                self._ollama_url,
+                self._llamacpp_url,
                 json=payload,
                 timeout=self._timeout
             )
             
+            elapsed_time = time.time() - start_time
+            logging.debug(f'[AIProcessor] llama.cpp response time: {elapsed_time:.2f}s')
+            
             response.raise_for_status()  # Raise exception for HTTP errors
             
+            #----------------------------------------------------------------
+            # PARSING RISPOSTA JSON MIGLIORATO
+            #----------------------------------------------------------------
             # Parse JSON response
             response_data = response.json()
             
-            # Extract message content from Ollama response
-            if 'message' in response_data and 'content' in response_data['message']:
-                content = response_data['message']['content'].strip()
-                logging.debug(f'[AIProcessor] Received response from Ollama: "{content[:100]}..."')
+            # Extract content from llama.cpp response
+            if 'content' in response_data:
+                content = response_data['content'].strip()
+                
+                # Pulizia aggiuntiva del contenuto
+                content = self._clean_response_content(content)
+                
+                logging.debug(f'[AIProcessor] Received response from llama.cpp: "{content[:100]}..."')
                 return content
             else:
-                logging.warning('[AIProcessor] Unexpected response format from Ollama')
+                logging.warning('[AIProcessor] Unexpected response format from llama.cpp')
                 logging.debug(f'[AIProcessor] Response data: {response_data}')
                 return None
                 
@@ -259,7 +330,7 @@ class AIProcessor:
             logging.error(f'[AIProcessor] Timeout after {self._timeout} seconds')
             raise
         except requests.exceptions.ConnectionError:
-            logging.error('[AIProcessor] Connection error - is Ollama running?')
+            logging.error('[AIProcessor] Connection error - is llama.cpp running?')
             raise
         except requests.exceptions.HTTPError as e:
             logging.error(f'[AIProcessor] HTTP error: {e}')
@@ -268,8 +339,43 @@ class AIProcessor:
             logging.error(f'[AIProcessor] Failed to parse JSON response: {e}')
             raise
         except Exception as e:
-            logging.error(f'[AIProcessor] Unexpected error in Ollama request: {e}')
+            logging.error(f'[AIProcessor] Unexpected error in llama.cpp request: {e}')
             raise
+    
+    def _clean_response_content(self, content: str) -> str:
+        """
+        Clean and optimize response content from llama.cpp.
+        
+        Args:
+            content (str): Raw content from llama.cpp
+            
+        Returns:
+            str: Cleaned content
+        """
+        #----------------------------------------------------------------
+        # PULIZIA CONTENUTO RISPOSTA
+        #----------------------------------------------------------------
+        if not content:
+            return content
+        
+        # Rimuovi prefissi comuni
+        prefixes_to_remove = ["Frank:", "Assistente:", "AI:"]
+        for prefix in prefixes_to_remove:
+            if content.startswith(prefix):
+                content = content[len(prefix):].strip()
+        
+        # Rimuovi suffissi comuni
+        suffixes_to_remove = ["\nUtente:", "\n\nUtente:"]
+        for suffix in suffixes_to_remove:
+            if content.endswith(suffix):
+                content = content[:-len(suffix)].strip()
+        
+        # Normalizza spazi multipli
+        import re
+        content = re.sub(r'\n{3,}', '\n\n', content)  # Max 2 newlines consecutive
+        content = re.sub(r' {2,}', ' ', content)      # Max 1 space consecutive
+        
+        return content.strip()
     
     def _create_success_response(
         self, 
@@ -288,13 +394,17 @@ class AIProcessor:
         Returns:
             AIResponse: The structured success response
         """
+        #----------------------------------------------------------------
+        # COSTRUZIONE METADATA RISPOSTA DETTAGLIATA
+        #----------------------------------------------------------------
         metadata = {
             'model': self._model_name,
-            'provider': 'ollama_local',
+            'provider': 'llamacpp_local',
             'user_input_length': len(user_input),
             'response_length': len(ai_text),
             'timestamp': time.time(),
-            'ollama_url': self._ollama_url
+            'llamacpp_url': self._llamacpp_url,
+            'timeout_used': self._timeout
         }
         
         if context:
@@ -305,7 +415,7 @@ class AIProcessor:
             response_type='conversational',
             metadata=metadata,
             success=True,
-            message='AI response generated successfully via Ollama'
+            message='AI response generated successfully via llama.cpp'
         )
     
     def _create_error_response(self, error_message: str) -> AIResponse:
@@ -318,13 +428,16 @@ class AIProcessor:
         Returns:
             AIResponse: The structured error response
         """
+        #----------------------------------------------------------------
+        # COSTRUZIONE RISPOSTA DI ERRORE
+        #----------------------------------------------------------------
         return AIResponse(
             text="Mi dispiace, si è verificato un problema nel processare la tua richiesta. Riprova più tardi.",
             response_type='error',
             metadata={
                 'error': error_message, 
                 'timestamp': time.time(),
-                'provider': 'ollama_local',
+                'provider': 'llamacpp_local',
                 'model': self._model_name
             },
             success=False,
@@ -333,26 +446,32 @@ class AIProcessor:
     
     def is_available(self) -> bool:
         """
-        Check if the AI processor is available and Ollama server is responding.
+        Check if the AI processor is available and llama.cpp server is responding.
         
         Returns:
-            bool: True if Ollama is available, False otherwise
+            bool: True if llama.cpp is available, False otherwise
         """
+        #----------------------------------------------------------------
+        # REFRESH STATUS DISPONIBILITÀ
+        #----------------------------------------------------------------
         # Refresh availability status with a quick test
         self._is_available = self._test_connection()
         return self._is_available
     
     def get_model_info(self) -> Dict[str, Any]:
         """
-        Get information about the current model and Ollama setup.
+        Get information about the current model and llama.cpp setup.
         
         Returns:
             Dict[str, Any]: Model and configuration information
         """
+        #----------------------------------------------------------------
+        # INFORMAZIONI CONFIGURAZIONE MODELLO
+        #----------------------------------------------------------------
         return {
             'model_name': self._model_name,
-            'ollama_url': self._ollama_url,
-            'provider': 'ollama_local',
+            'llamacpp_url': self._llamacpp_url,
+            'provider': 'llamacpp_local',
             'timeout': self._timeout,
             'max_retries': self._max_retries,
             'available': self.is_available()
@@ -369,6 +488,9 @@ class AIProcessor:
             bool: True if model change was successful, False otherwise
         """
         try:
+            #----------------------------------------------------------------
+            # CAMBIO MODELLO CON VERIFICA
+            #----------------------------------------------------------------
             old_model = self._model_name
             self._model_name = new_model_name
             
@@ -393,7 +515,10 @@ class AIProcessor:
         Shutdown the AI processor and clean up resources.
         """
         try:
-            logging.info('[AIProcessor] Shutting down Ollama AI processor')
+            #----------------------------------------------------------------
+            # SHUTDOWN E CLEANUP RISORSE
+            #----------------------------------------------------------------
+            logging.info('[AIProcessor] Shutting down llama.cpp AI processor')
             self._session.close()
             self._is_available = False
         except Exception as e:

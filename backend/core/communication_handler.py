@@ -174,6 +174,26 @@ class CommunicationHandler:
                 return
             
             #----------------------------------------------------------------
+            # VERIFICA PROVIDER ATTUALE DOPO SWITCH (GESTIONE FALLBACK)
+            #----------------------------------------------------------------
+            # Controlla quale provider è effettivamente attivo ora
+            current_provider = None
+            if hasattr(self._ai_handler, 'get_current_ai_provider'):
+                try:
+                    current_provider_obj = self._ai_handler.get_current_ai_provider()
+                    if current_provider_obj:
+                        if hasattr(current_provider_obj, 'value'):
+                            current_provider = current_provider_obj.value
+                        else:
+                            current_provider = str(current_provider_obj).lower()
+                except Exception as e:
+                    logging.debug(f'[CommunicationHandler] Could not get current provider: {e}')
+            
+            # Se non riusciamo a determinare il provider, assumiamo il successo
+            if not current_provider:
+                current_provider = provider_str
+            
+            #----------------------------------------------------------------
             # RESET: CLEAR LOG + MESSAGGIO DI STATO
             #----------------------------------------------------------------
             # Clear log sul client corrente
@@ -182,14 +202,30 @@ class CommunicationHandler:
                 'data': 'Console pulita dopo cambio provider.'
             }, to=sid)
             
-            # Messaggio di conferma
-            human_label = 'LOCAL (llama.cpp)' if provider_str == 'local' else 'CLOUD (Gemini)'
-            self._socketio_instance.emit('backend_response', {
-                'data': f'Provider AI impostato: {human_label}',
-                'type': 'system'
-            }, to=sid)
-            
-            logging.info(f'[CommunicationHandler] AI provider switched to: {provider_str}')
+            # Messaggio di conferma o fallback
+            if current_provider == provider_str:
+                # Switch avvenuto come richiesto
+                human_label = 'LOCAL (llama.cpp)' if current_provider == 'local' else 'CLOUD (Gemini)'
+                self._socketio_instance.emit('backend_response', {
+                    'data': f'Provider AI impostato: {human_label}',
+                    'type': 'system'
+                }, to=sid)
+                logging.info(f'[CommunicationHandler] AI provider switched to: {current_provider}')
+            else:
+                # Fallback automatico è avvenuto
+                requested_label = 'LOCAL (llama.cpp)' if provider_str == 'local' else 'CLOUD (Gemini)'
+                actual_label = 'LOCAL (llama.cpp)' if current_provider == 'local' else 'CLOUD (Gemini)'
+                self._socketio_instance.emit('backend_response', {
+                    'data': f'Fallback automatico: {requested_label} non disponibile, attivato {actual_label}',
+                    'type': 'system'
+                }, to=sid)
+                logging.info(f'[CommunicationHandler] AI provider fallback: requested {provider_str}, got {current_provider}')
+                
+                # Aggiorna UI per riflettere il provider effettivamente attivo
+                self._socketio_instance.emit('backend_action', {
+                    'action': 'update_ai_provider',
+                    'data': current_provider
+                }, to=sid)
             
             #----------------------------------------------------------------
             # WARMUP NON BLOCCANTE DEL NUOVO PROVIDER

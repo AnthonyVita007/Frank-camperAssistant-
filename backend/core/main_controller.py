@@ -114,15 +114,8 @@ class MainController:
             if self._mcp_handler:
                 self._register_sample_tools()
             
-            #----------------------------------------------------------------
-            # AI MODEL WARMUP
-            #----------------------------------------------------------------
-            # Start AI warmup in background task if available
-            if self._ai_handler and self._ai_handler.is_ai_enabled():
-                logging.info('[MainController] Starting AI model warmup...')
-                self._socketio_instance.start_background_task(self._perform_ai_warmup)
-            else:
-                logging.debug('[MainController] AI not available, skipping warmup')
+            # Note: AI warmup removed from automatic startup to avoid test prompts
+            # Warmup will happen on demand when providers are first used
             
         except Exception as e:
             logging.error(f'[MainController] Failed to initialize components: {e}')

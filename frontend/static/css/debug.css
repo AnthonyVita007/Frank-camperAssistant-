@@ -92,7 +92,7 @@ AI TOGGLE (interruttore giocattolo)
 ----------------------------------------------------------------*/
 .ai-toggle {
   position: absolute;
-  right: 0;
+  right: 20px;
   top: 50%;
   transform: translateY(-50%);
   display: inline-flex;
@@ -101,7 +101,7 @@ AI TOGGLE (interruttore giocattolo)
 }
 
 .ai-label {
-  font-size: clamp(12px, 1.8vw, 16px);
+  font-size: clamp(16px, 2.2vw, 20px);
   letter-spacing: 0.06em;
   opacity: 0.9;
   user-select: none;
@@ -486,7 +486,7 @@ RESPONSIVE
   }
   
   .ai-label {
-    font-size: clamp(11px, 2.2vw, 14px);
+    font-size: clamp(14px, 2.5vw, 18px);
   }
   
   .workspace-scrollable {

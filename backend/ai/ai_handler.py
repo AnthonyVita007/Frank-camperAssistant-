@@ -157,7 +157,7 @@ class AIHandler:
     #----------------------------------------------------------------
     def set_ai_provider(self, provider: Union[str, Any]) -> bool:
         """
-        Switch to a different AI provider (if supported by AIProcessor).
+        Switch to a different AI provider (if supported by AIProcessor) with automatic fallback.
         
         Args:
             provider (Union[str, Any]): 'local' | 'gemini' | AIProvider enum (se disponibile)
@@ -177,8 +177,10 @@ class AIHandler:
             
             # Normalizzazione provider
             target = provider
+            target_name = ""
             if isinstance(provider, str):
                 prov_str = provider.strip().lower()
+                target_name = prov_str
                 if AIProvider:
                     if prov_str == 'local':
                         target = AIProvider.LOCAL  # type: ignore
@@ -191,11 +193,13 @@ class AIHandler:
                     # Se AIProvider non è disponibile, non possiamo convertire
                     logging.warning('[AIHandler] AIProvider enum not available in AIProcessor module')
                     return False
+            else:
+                target_name = getattr(target, "value", str(target))
             
             # Esegui lo switch
             success = self._ai_processor.set_provider(target)  # type: ignore
             if success:
-                logging.info(f'[AIHandler] Switched AI provider to: {getattr(target, "value", str(target))}')
+                logging.info(f'[AIHandler] Switched AI provider to: {target_name}')
                 # Re-inizializza (opzionale) il detector degli intenti con il processor attuale
                 if self._llm_intent_enabled:
                     try:
@@ -206,6 +210,29 @@ class AIHandler:
                     except Exception as e:
                         logging.warning(f'[AIHandler] Could not reinitialize LLM intent detector after provider switch: {e}')
                 return True
+            
+            # Se lo switch ha fallito e stavamo tentando di passare a GEMINI, prova fallback a LOCAL
+            if target_name == 'gemini':
+                logging.warning('[AIHandler] Gemini switch failed, attempting automatic fallback to LOCAL')
+                try:
+                    local_target = AIProvider.LOCAL if AIProvider else 'local'  # type: ignore
+                    fallback_success = self._ai_processor.set_provider(local_target)  # type: ignore
+                    if fallback_success:
+                        logging.info('[AIHandler] Automatic fallback to LOCAL successful')
+                        # Re-inizializza detector per LOCAL
+                        if self._llm_intent_enabled:
+                            try:
+                                self._llm_intent_detector = LLMIntentDetector(
+                                    ai_processor=self._ai_processor,
+                                    enabled=True
+                                )
+                            except Exception as e:
+                                logging.warning(f'[AIHandler] Could not reinitialize LLM intent detector after fallback: {e}')
+                        return True
+                    else:
+                        logging.error('[AIHandler] Automatic fallback to LOCAL also failed')
+                except Exception as fallback_error:
+                    logging.error(f'[AIHandler] Error during automatic fallback: {fallback_error}')
             
             logging.warning('[AIHandler] AI provider switch failed in AIProcessor')
             return False

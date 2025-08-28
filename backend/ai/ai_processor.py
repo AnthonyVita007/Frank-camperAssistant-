@@ -246,11 +246,12 @@ class AIProcessor:
         # COSTRUZIONE PROMPT OTTIMIZZATO PER LLAMA.CPP
         #----------------------------------------------------------------
         # Base system message for Frank - ottimizzato per brevità
-        system_message = """Sei Frank, assistente AI per viaggi in camper.
-                            Rispondi in italiano, sii cordiale e molto conciso.
-                            Specialista in viaggi e camper, ma rispondi anche a domande generali.
-
-"""
+        system_message = """Sei Frank, assistente AI di bordo per viaggi in camper.
+        - Rispondi sempre in italiano naturale, corretto e scorrevole ma sii sintetico.
+        - Lunghezza: 1–3 frasi, salvo quando viene chiesto esplicitamente un elenco o una guida passo‑passo.
+        - Se la richiesta è ambigua, poni una o più domande di chiarimento.
+        - Usa unità metriche (km, °C, litri) e termini comuni in italiano, evitando anglicismi inutili.
+        """
         
         # Add context if provided
         if context:
@@ -276,8 +277,8 @@ class AIProcessor:
         #----------------------------------------------------------------
         payload = {
             "prompt": prompt,
-            "n_predict": 192,  # Ridotto da 512 a 192 per risposte più veloci
-            "temperature": 0.7,
+            "n_predict": 512,  # Ridotto da 512 a 192 per risposte più veloci
+            "temperature": 0.1,
             "top_p": 0.8,
             "top_k": 40,
             "repeat_penalty": 1.15,  # Aumentato per evitare ripetizioni

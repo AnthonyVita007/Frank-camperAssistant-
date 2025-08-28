@@ -107,6 +107,16 @@ socket.on('backend_action', (payload) => {
         }
         return;
     }
+    
+    if (action === 'update_ai_provider') {
+        const actualProvider = payload && payload.data;
+        if (actualProvider && aiSwitch) {
+            // Aggiorna UI per riflettere il provider effettivamente attivo (fallback)
+            setSwitchUI(actualProvider);
+            appendLog(`UI aggiornata per provider: ${actualProvider === 'gemini' ? 'CLOUD (Gemini)' : 'LOCAL (llama.cpp)'}`, 'system');
+        }
+        return;
+    }
 });
 
 //----------------------------------------------------------------

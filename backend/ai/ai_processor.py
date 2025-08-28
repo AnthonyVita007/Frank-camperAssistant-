@@ -89,15 +89,15 @@ class AIProcessor:
         
         # Initialize Gemini API configuration
         self._gemini_config = {
-            'api_key': gemini_api_key or os.getenv('GOOGLE_GEMINI_API_KEY'),
+            'api_key': gemini_api_key or os.getenv('GEMINI_API_KEY'),
             'model': 'gemini-1.5-flash',
             'url': 'https://generativelanguage.googleapis.com/v1beta/models/',
             'enabled': True
         }
         
-        # Test availability of both providers
-        self._local_available = self._test_local_connection()
-        self._gemini_available = self._test_gemini_connection()
+        # Initialize availability status without testing at startup
+        self._local_available = False
+        self._gemini_available = False
         
         # Log initialization results
         self._log_initialization_status()
@@ -124,20 +124,18 @@ class AIProcessor:
     
     def _log_initialization_status(self) -> None:
         """Log the initialization status of both AI providers."""
-        local_status = "✓ AVAILABLE" if self._local_available else "✗ UNAVAILABLE"
-        gemini_status = "✓ AVAILABLE" if self._gemini_available else "✗ UNAVAILABLE"
+        local_config_status = "CONFIGURED" if self._local_config['url'] else "NOT CONFIGURED"
+        gemini_config_status = "CONFIGURED" if self._gemini_config['api_key'] else "NOT CONFIGURED"
         
         logging.info(f'[AIProcessor] Dual AI processor initialized:')
-        logging.info(f'[AIProcessor] - Local llama.cpp: {local_status}')
-        logging.info(f'[AIProcessor] - Google Gemini: {gemini_status}')
+        logging.info(f'[AIProcessor] - Local llama.cpp: {local_config_status} (availability tested on demand)')
+        logging.info(f'[AIProcessor] - Google Gemini: {gemini_config_status} (availability tested on demand)')
         logging.info(f'[AIProcessor] - Current provider: {self._current_provider.value}')
         
-        if not self._local_available and not self._gemini_available:
-            logging.error('[AIProcessor] No AI providers available!')
-        elif self._current_provider == AIProvider.LOCAL and not self._local_available:
-            logging.warning('[AIProcessor] Local provider selected but not available')
-        elif self._current_provider == AIProvider.GEMINI and not self._gemini_available:
-            logging.warning('[AIProcessor] Gemini provider selected but not available')
+        if not self._local_config['url'] and not self._gemini_config['api_key']:
+            logging.warning('[AIProcessor] No AI providers configured!')
+        else:
+            logging.info('[AIProcessor] Provider availability will be tested when first used')
 
 
 #----------------------------------------------------------------
@@ -558,13 +556,19 @@ class AIProcessor:
         """
         old_provider = self._current_provider
         
-        # Check if target provider is available
-        if provider == AIProvider.LOCAL and not self._local_available:
-            logging.warning('[AIProcessor] Cannot switch to local: not available')
-            return False
-        elif provider == AIProvider.GEMINI and not self._gemini_available:
-            logging.warning('[AIProcessor] Cannot switch to Gemini: not available')
-            return False
+        # Test availability of target provider on demand
+        if provider == AIProvider.LOCAL:
+            if not self._test_local_connection():
+                logging.warning('[AIProcessor] Cannot switch to local: not available')
+                self._local_available = False
+                return False
+            self._local_available = True
+        elif provider == AIProvider.GEMINI:
+            if not self._test_gemini_connection():
+                logging.warning('[AIProcessor] Cannot switch to Gemini: not available')
+                self._gemini_available = False
+                return False
+            self._gemini_available = True
         
         self._current_provider = provider
         logging.info(f'[AIProcessor] Switched from {old_provider.value} to {provider.value}')
@@ -629,8 +633,12 @@ class AIProcessor:
     
     def _process_with_local(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> AIResponse:
         """Process request using local llama.cpp."""
+        # Test availability on demand if not yet tested
         if not self._local_available:
-            raise Exception("Local AI not available")
+            if not self._test_local_connection():
+                self._local_available = False
+                raise Exception("Local AI not available")
+            self._local_available = True
         
         formatted_prompt = self._prepare_local_prompt(user_input, context)
         response_text = self._make_local_request(formatted_prompt)
@@ -647,8 +655,12 @@ class AIProcessor:
     
     def _process_with_gemini(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> AIResponse:
         """Process request using Google Gemini API."""
+        # Test availability on demand if not yet tested
         if not self._gemini_available:
-            raise Exception("Gemini API not available")
+            if not self._test_gemini_connection():
+                self._gemini_available = False
+                raise Exception("Gemini API not available")
+            self._gemini_available = True
         
         formatted_prompt = self._prepare_gemini_prompt(user_input, context)
         response_text = self._make_gemini_request(formatted_prompt)
@@ -763,7 +775,15 @@ class AIProcessor:
         )
     
     def is_available(self) -> bool:
-        """Check if any AI provider is available."""
+        """Check if any AI provider is available by testing on demand."""
+        # Test local availability if not yet determined
+        if not self._local_available:
+            self._local_available = self._test_local_connection()
+        
+        # Test gemini availability if not yet determined  
+        if not self._gemini_available:
+            self._gemini_available = self._test_gemini_connection()
+            
         return self._local_available or self._gemini_available
     
     def get_provider_status(self) -> Dict[str, Any]:
@@ -786,10 +806,22 @@ class AIProcessor:
     def warmup(self) -> bool:
         """Warm up the current AI provider."""
         try:
-            if self._current_provider == AIProvider.LOCAL and self._local_available:
-                return self._warmup_local()
-            elif self._current_provider == AIProvider.GEMINI and self._gemini_available:
-                return self._warmup_gemini()
+            if self._current_provider == AIProvider.LOCAL:
+                # Test availability first, then warmup if available
+                if self._test_local_connection():
+                    self._local_available = True
+                    return self._warmup_local()
+                else:
+                    self._local_available = False
+                    return False
+            elif self._current_provider == AIProvider.GEMINI:
+                # Test availability first, then warmup if available
+                if self._test_gemini_connection():
+                    self._gemini_available = True
+                    return self._warmup_gemini()
+                else:
+                    self._gemini_available = False
+                    return False
             else:
                 logging.warning('[AIProcessor] No provider available for warmup')
                 return False

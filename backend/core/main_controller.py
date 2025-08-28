@@ -83,6 +83,16 @@ class MainController:
             )
             logging.debug('[MainController] Communication handler initialized')
             
+            #----------------------------------------------------------------
+            # AI MODEL WARMUP
+            #----------------------------------------------------------------
+            # Start AI warmup in background task if available
+            if self._ai_handler and self._ai_handler.is_ai_enabled():
+                logging.info('[MainController] Starting AI model warmup...')
+                self._socketio_instance.start_background_task(self._perform_ai_warmup)
+            else:
+                logging.debug('[MainController] AI not available, skipping warmup')
+            
         except Exception as e:
             logging.error(f'[MainController] Failed to initialize components: {e}')
             raise
@@ -192,6 +202,40 @@ class MainController:
         except Exception as e:
             logging.error(f'[MainController] Failed to restart components: {e}')
             return False
+    
+    #----------------------------------------------------------------
+    # AI WARMUP FUNCTIONALITY
+    #----------------------------------------------------------------
+    
+    def _perform_ai_warmup(self) -> None:
+        """
+        Perform AI model warmup in a background task.
+        
+        This method safely performs AI model warmup without blocking
+        the main application startup process.
+        """
+        try:
+            logging.info('[MainController] AI warmup task started')
+            
+            # Get AI processor for warmup
+            if (self._ai_handler and 
+                self._ai_handler.is_ai_enabled() and 
+                hasattr(self._ai_handler, '_ai_processor') and
+                self._ai_handler._ai_processor):
+                
+                # Perform warmup
+                warmup_success = self._ai_handler._ai_processor.warmup()
+                
+                if warmup_success:
+                    logging.info('[MainController] AI model warmup completed successfully')
+                else:
+                    logging.warning('[MainController] AI model warmup failed, but system will continue')
+            else:
+                logging.warning('[MainController] AI processor not available for warmup')
+                
+        except Exception as e:
+            logging.error(f'[MainController] Error during AI warmup: {e}')
+            # Continue anyway - warmup failure should not prevent system operation
 
 
 def setup_socketio_events(socketio_instance: SocketIO) -> MainController:

@@ -121,6 +121,134 @@ socket.on('backend_action', (payload) => {
     //... eventuali altre azioni future
 });
 
+//----------------------------------------------------------------
+// EVENTI SOCKET.IO PER STREAMING
+//----------------------------------------------------------------
+
+// Mappa per tenere traccia delle bubble di streaming attive
+//streaming
+let streamingBubbles = new Map();
+
+// Inizio streaming - crea una bubble vuota
+//streaming
+socket.on('backend_stream_start', (payload) => {
+    //...
+    const requestId = payload && payload.request_id;
+    //...
+    if (!requestId) {
+        //...
+        console.warn('Ricevuto backend_stream_start senza request_id');
+        //...
+        return;
+    }
+    //...
+    
+    // Crea una bubble backend vuota per il streaming
+    //streaming
+    const streamBubble = appendLog('', 'backend', false);
+    //...
+    
+    // Memorizza il riferimento per aggiornamenti futuri
+    //streaming
+    streamingBubbles.set(requestId, {
+        element: streamBubble,
+        content: '',
+        startTime: Date.now()
+    });
+    //...
+    
+    console.debug(`Streaming iniziato per request ${requestId}`);
+});
+
+// Chunk di streaming - appendi contenuto incrementalmente  
+//streaming
+socket.on('backend_stream_chunk', (payload) => {
+    //...
+    const requestId = payload && payload.request_id;
+    //...
+    const delta = payload && payload.delta;
+    //...
+    
+    if (!requestId || !streamingBubbles.has(requestId)) {
+        //...
+        console.warn('Ricevuto chunk per request_id sconosciuto:', requestId);
+        //...
+        return;
+    }
+    //...
+    
+    if (delta) {
+        //...
+        const streamData = streamingBubbles.get(requestId);
+        //...
+        streamData.content += delta;
+        //...
+        
+        // Aggiorna il contenuto della bubble in tempo reale
+        //streaming
+        streamData.element.textContent = streamData.content;
+        //...
+        
+        // Autoscroll per seguire il testo che appare
+        //streaming
+        logContainer.scrollTop = logContainer.scrollHeight;
+        //...
+    }
+});
+
+// Fine streaming - finalizza la bubble
+//streaming  
+socket.on('backend_stream_end', (payload) => {
+    //...
+    const requestId = payload && payload.request_id;
+    //...
+    const finalText = payload && payload.final;
+    //...
+    const metadata = payload && payload.metadata;
+    //...
+    
+    if (!requestId) {
+        //...
+        console.warn('Ricevuto backend_stream_end senza request_id');
+        //...
+        return;
+    }
+    //...
+    
+    if (streamingBubbles.has(requestId)) {
+        //...
+        const streamData = streamingBubbles.get(requestId);
+        //...
+        const duration = Date.now() - streamData.startTime;
+        //...
+        
+        // Finalizza il contenuto con il testo finale
+        //streaming
+        if (finalText) {
+            //...
+            streamData.element.textContent = finalText;
+            //...
+        }
+        //...
+        
+        // Pulizia: rimuovi dalla mappa
+        //streaming
+        streamingBubbles.delete(requestId);
+        //...
+        
+        console.debug(`Streaming completato per request ${requestId} in ${duration}ms`);
+        //...
+        
+        // Log di telemetria se presente metadata
+        //streaming
+        if (metadata && metadata.chunk_count) {
+            //...
+            console.debug(`Streaming stats: ${metadata.chunk_count} chunks, ${metadata.total_length} chars`);
+            //...
+        }
+    }
+});
+
 // disconnessione / errori
 //connessione
 socket.on('disconnect', () => {

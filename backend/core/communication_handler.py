@@ -6,6 +6,8 @@ handling message reception, processing, and response transmission.
 """
 
 import logging
+import uuid
+import time
 from typing import Dict, Any, Optional, Callable
 from flask_socketio import SocketIO, emit
 
@@ -87,9 +89,16 @@ class CommunicationHandler:
                 else:
                     self._send_error_response(result.data)
             else:
-                # Process as AI request
-                ai_response = self._ai_handler.handle_ai_request(user_input)
-                self._send_ai_response(ai_response)
+                # Process as AI request with streaming support
+                request_id = str(uuid.uuid4())
+                logging.debug(f'[CommunicationHandler] Starting AI request with ID: {request_id}')
+                
+                # Start streaming processing in background task
+                self._socketio_instance.start_background_task(
+                    self._handle_ai_streaming_request,
+                    user_input,
+                    request_id
+                )
                 
         except Exception as e:
             logging.error(f'[CommunicationHandler] Error handling frontend request: {e}')
@@ -213,6 +222,127 @@ class CommunicationHandler:
         except Exception as e:
             logging.error(f'[CommunicationHandler] Error sending AI response: {e}')
             self._send_error_response('Errore nell\'invio della risposta AI')
+    
+    #----------------------------------------------------------------
+    # STREAMING FUNCTIONALITY
+    #----------------------------------------------------------------
+    
+    def _handle_ai_streaming_request(self, user_input: str, request_id: str) -> None:
+        """
+        Handle an AI request with streaming support in a background task.
+        
+        This method processes AI requests using streaming to reduce perceived latency
+        and provides fallback to non-streaming if streaming fails.
+        
+        Args:
+            user_input (str): The user input to process
+            request_id (str): Unique identifier for this request
+        """
+        try:
+            logging.debug(f'[CommunicationHandler] Processing streaming AI request {request_id}')
+            
+            #----------------------------------------------------------------
+            # AVVIO STREAMING CON EVENTO INITIAL
+            #----------------------------------------------------------------
+            # Send stream start event
+            metadata = {
+                'timestamp': time.time(),
+                'request_id': request_id,
+                'streaming': True
+            }
+            
+            emit('backend_stream_start', {
+                'request_id': request_id,
+                'metadata': metadata
+            })
+            
+            #----------------------------------------------------------------
+            # ELABORAZIONE STREAMING CON GESTIONE CHUNK
+            #----------------------------------------------------------------
+            accumulated_text = ""
+            chunk_count = 0
+            
+            try:
+                # Process streaming request
+                for chunk in self._ai_handler.handle_ai_stream(user_input):
+                    if chunk:
+                        accumulated_text += chunk
+                        chunk_count += 1
+                        
+                        # Send chunk to frontend
+                        emit('backend_stream_chunk', {
+                            'request_id': request_id,
+                            'delta': chunk
+                        })
+                
+                #----------------------------------------------------------------
+                # FINALIZZAZIONE STREAMING
+                #----------------------------------------------------------------
+                # Send completion event
+                final_metadata = {
+                    'timestamp': time.time(),
+                    'request_id': request_id,
+                    'streaming': True,
+                    'chunk_count': chunk_count,
+                    'total_length': len(accumulated_text),
+                    'response_type': 'conversational'
+                }
+                
+                emit('backend_stream_end', {
+                    'request_id': request_id,
+                    'final': accumulated_text,
+                    'metadata': final_metadata
+                })
+                
+                logging.info(f'[CommunicationHandler] Streaming completed for request {request_id}: {chunk_count} chunks')
+                
+            except Exception as streaming_error:
+                logging.warning(f'[CommunicationHandler] Streaming failed for request {request_id}: {streaming_error}')
+                
+                #----------------------------------------------------------------
+                # FALLBACK A NON-STREAMING
+                #----------------------------------------------------------------
+                # Fallback to non-streaming response
+                try:
+                    logging.info(f'[CommunicationHandler] Falling back to non-streaming for request {request_id}')
+                    ai_response = self._ai_handler.handle_ai_request(user_input)
+                    
+                    # Send fallback response as regular backend_response
+                    self._send_ai_response(ai_response)
+                    
+                    # Send stream end event to clean up frontend state
+                    emit('backend_stream_end', {
+                        'request_id': request_id,
+                        'final': ai_response.text if ai_response.success else "",
+                        'metadata': {
+                            'timestamp': time.time(),
+                            'request_id': request_id,
+                            'streaming': False,
+                            'fallback': True,
+                            'error': str(streaming_error)
+                        }
+                    })
+                    
+                except Exception as fallback_error:
+                    logging.error(f'[CommunicationHandler] Both streaming and fallback failed for request {request_id}: {fallback_error}')
+                    self._send_error_response('Errore nel processare la richiesta AI')
+                    
+                    # Send error stream end event
+                    emit('backend_stream_end', {
+                        'request_id': request_id,
+                        'final': "",
+                        'metadata': {
+                            'timestamp': time.time(),
+                            'request_id': request_id,
+                            'streaming': False,
+                            'error': True,
+                            'error_message': str(fallback_error)
+                        }
+                    })
+        
+        except Exception as e:
+            logging.error(f'[CommunicationHandler] Unexpected error in streaming handler for request {request_id}: {e}')
+            self._send_error_response('Errore interno del server durante lo streaming')
     
     def send_message_to_client(self, event: str, data: Dict[str, Any]) -> bool:
         """

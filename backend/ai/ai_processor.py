@@ -276,7 +276,7 @@ class AIProcessor:
         #----------------------------------------------------------------
         payload = {
             "prompt": prompt,
-            "n_predict": 512,  # Ridotto per risposte più veloci
+            "n_predict": 192,  # Ridotto da 512 a 192 per risposte più veloci
             "temperature": 0.7,
             "top_p": 0.8,
             "top_k": 40,
@@ -508,6 +508,251 @@ class AIProcessor:
                 
         except Exception as e:
             logging.error(f'[AIProcessor] Error changing model: {e}')
+            return False
+    
+    #----------------------------------------------------------------
+    # STREAMING FUNCTIONALITY
+    #----------------------------------------------------------------
+    
+    def stream_request(self, user_input: str, context: Optional[Dict[str, Any]] = None):
+        """
+        Process a user request using llama.cpp streaming API.
+        
+        This method yields chunks of text as they are received from llama.cpp,
+        enabling real-time streaming responses to reduce perceived latency.
+        
+        Args:
+            user_input (str): The user's input text
+            context (Optional[Dict[str, Any]]): Additional context for the request
+            
+        Yields:
+            str: Chunks of text as they are received from llama.cpp
+            
+        Raises:
+            Exception: If streaming fails or input is invalid
+        """
+        #----------------------------------------------------------------
+        # VALIDAZIONE INPUT UTENTE PER STREAMING
+        #----------------------------------------------------------------
+        if not user_input or not isinstance(user_input, str):
+            logging.warning('[AIProcessor] Invalid input for streaming request')
+            yield "Mi dispiace, non ho ricevuto una richiesta valida."
+            return
+        
+        user_input = user_input.strip()
+        if not user_input:
+            logging.warning('[AIProcessor] Empty input for streaming request')
+            yield "Mi dispiace, la tua richiesta sembra essere vuota."
+            return
+        
+        #----------------------------------------------------------------
+        # VERIFICA DISPONIBILITÀ LLAMA.CPP PER STREAMING
+        #----------------------------------------------------------------
+        if not self._is_available:
+            logging.error('[AIProcessor] llama.cpp server not available for streaming')
+            yield "Mi dispiace, il sistema AI locale non è disponibile al momento."
+            return
+        
+        logging.info(f'[AIProcessor] Starting streaming request: "{user_input[:100]}..."')
+        
+        try:
+            # Prepare the prompt for streaming
+            formatted_prompt = self._prepare_prompt(user_input, context)
+            
+            # Stream response from llama.cpp
+            for chunk in self._make_llamacpp_stream_request(formatted_prompt):
+                if chunk:
+                    # Clean chunk content in real-time
+                    cleaned_chunk = self._clean_streaming_chunk(chunk)
+                    if cleaned_chunk:
+                        yield cleaned_chunk
+                        
+        except Exception as e:
+            logging.error(f'[AIProcessor] Error in streaming request: {e}')
+            yield f"Mi dispiace, si è verificato un errore durante la generazione della risposta: {str(e)}"
+    
+    def _make_llamacpp_stream_request(self, prompt: str):
+        """
+        Make a streaming request to llama.cpp completion API.
+        
+        This method handles the HTTP streaming connection and parses
+        the server-sent events format used by llama.cpp.
+        
+        Args:
+            prompt (str): The formatted prompt for completion
+            
+        Yields:
+            str: Content chunks as they are received
+            
+        Raises:
+            Exception: If the streaming request fails
+        """
+        #----------------------------------------------------------------
+        # CONFIGURAZIONE PAYLOAD PER STREAMING
+        #----------------------------------------------------------------
+        payload = {
+            "prompt": prompt,
+            "n_predict": 192,  # Stesso valore del non-streaming
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "top_k": 40,
+            "repeat_penalty": 1.15,
+            "repeat_last_n": 128,
+            "stop": ["\nUtente:", "\n\nUtente:", "Utente:", "\n\n"],
+            "stream": True,  # Abilita streaming
+            "cache_prompt": True
+        }
+        
+        try:
+            logging.debug(f'[AIProcessor] Starting streaming request to llama.cpp: {self._llamacpp_url}')
+            
+            #----------------------------------------------------------------
+            # INVIO RICHIESTA HTTP STREAMING
+            #----------------------------------------------------------------
+            start_time = time.time()
+            first_chunk_time = None
+            
+            response = self._session.post(
+                self._llamacpp_url,
+                json=payload,
+                timeout=self._timeout,
+                stream=True  # Abilita streaming HTTP
+            )
+            
+            response.raise_for_status()
+            
+            #----------------------------------------------------------------
+            # PARSING EVENTI STREAMING IN TEMPO REALE
+            #----------------------------------------------------------------
+            buffer = ""
+            chunk_count = 0
+            
+            for raw_chunk in response.iter_lines(decode_unicode=True):
+                if raw_chunk:
+                    # Gestione eventi server-sent events di llama.cpp
+                    if raw_chunk.startswith('data: '):
+                        data_chunk = raw_chunk[6:]  # Rimuovi prefisso "data: "
+                        
+                        # Segnala primo chunk per metriche TTFB
+                        if first_chunk_time is None:
+                            first_chunk_time = time.time()
+                            ttfb = first_chunk_time - start_time
+                            logging.debug(f'[AIProcessor] TTFB (Time To First Byte): {ttfb:.3f}s')
+                        
+                        if data_chunk.strip() == '[DONE]':
+                            # Fine dello streaming
+                            break
+                        
+                        try:
+                            # Parse JSON del chunk
+                            chunk_data = json.loads(data_chunk)
+                            
+                            # Estrai contenuto dal chunk
+                            if 'content' in chunk_data:
+                                content = chunk_data['content']
+                                if content:
+                                    chunk_count += 1
+                                    yield content
+                                    
+                        except json.JSONDecodeError:
+                            # Skip chunk malformati
+                            continue
+            
+            # Log statistiche finali
+            total_time = time.time() - start_time
+            logging.debug(f'[AIProcessor] Streaming completed: {chunk_count} chunks in {total_time:.2f}s')
+            
+        except requests.exceptions.Timeout:
+            logging.error(f'[AIProcessor] Streaming timeout after {self._timeout} seconds')
+            raise
+        except requests.exceptions.ConnectionError:
+            logging.error('[AIProcessor] Streaming connection error - is llama.cpp running?')
+            raise
+        except requests.exceptions.HTTPError as e:
+            logging.error(f'[AIProcessor] Streaming HTTP error: {e}')
+            raise
+        except Exception as e:
+            logging.error(f'[AIProcessor] Unexpected error in streaming request: {e}')
+            raise
+    
+    def _clean_streaming_chunk(self, chunk: str) -> str:
+        """
+        Clean streaming chunk content in real-time.
+        
+        This method applies lightweight cleaning to streaming chunks
+        without affecting the streaming performance.
+        
+        Args:
+            chunk (str): Raw chunk content from llama.cpp
+            
+        Returns:
+            str: Cleaned chunk content
+        """
+        if not chunk:
+            return chunk
+        
+        # Rimuovi prefissi comuni solo se il chunk inizia con essi
+        prefixes_to_remove = ["Frank:", "Assistente:", "AI:"]
+        for prefix in prefixes_to_remove:
+            if chunk.startswith(prefix):
+                chunk = chunk[len(prefix):].strip()
+                break
+        
+        return chunk
+    
+    #----------------------------------------------------------------
+    # WARMUP FUNCTIONALITY
+    #----------------------------------------------------------------
+    
+    def warmup(self) -> bool:
+        """
+        Warm up the llama.cpp model with a minimal request.
+        
+        This method sends a brief request to initialize the model and cache,
+        reducing latency for subsequent requests. Designed to be non-blocking
+        and safe to call during application startup.
+        
+        Returns:
+            bool: True if warmup was successful, False otherwise
+        """
+        try:
+            logging.info('[AIProcessor] Starting model warmup...')
+            warmup_start = time.time()
+            
+            #----------------------------------------------------------------
+            # WARMUP REQUEST OTTIMIZZATO
+            #----------------------------------------------------------------
+            warmup_payload = {
+                "prompt": "Hi",
+                "n_predict": 5,  # Minimo predizioni per warmup veloce
+                "temperature": 0.1,
+                "cache_prompt": True,
+                "stop": ["\n"]
+            }
+            
+            response = self._session.post(
+                self._llamacpp_url,
+                json=warmup_payload,
+                timeout=15  # Timeout ridotto per warmup
+            )
+            
+            warmup_time = time.time() - warmup_start
+            
+            if response.status_code == 200:
+                logging.info(f'[AIProcessor] Model warmup completed successfully in {warmup_time:.2f}s')
+                return True
+            else:
+                logging.warning(f'[AIProcessor] Model warmup failed with status code: {response.status_code}')
+                return False
+                
+        except requests.exceptions.Timeout:
+            logging.warning('[AIProcessor] Model warmup timeout - continuing anyway')
+            return False
+        except requests.exceptions.RequestException as e:
+            logging.warning(f'[AIProcessor] Model warmup failed: {e} - continuing anyway')
+            return False
+        except Exception as e:
+            logging.error(f'[AIProcessor] Unexpected error during warmup: {e}')
             return False
     
     def shutdown(self) -> None:

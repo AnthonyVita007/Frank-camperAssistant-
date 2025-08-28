@@ -384,12 +384,18 @@ class AIHandler:
             
             if detected_intents:
                 primary_intent = max(detected_intents.keys(), key=lambda k: len(detected_intents[k]))
+                confidence = len(detected_intents[primary_intent]) / len(intent_patterns[primary_intent])
+                
+                # Return simplified format consistent with new intent detection
                 return {
-                    'primary_category': primary_intent,
-                    'detected_patterns': detected_intents,
-                    'confidence': len(detected_intents[primary_intent]) / len(intent_patterns[primary_intent]),
-                    'raw_input': user_input
+                    'requires_tool': True,
+                    'category': primary_intent,
+                    'tool_name': primary_intent,
+                    'confidence': confidence,
+                    'detection_method': 'pattern_matching',
+                    'detected_patterns': detected_intents  # Keep for backward compatibility
                 }
+            
             return None
         
         except Exception as e:
@@ -447,7 +453,7 @@ class AIHandler:
                     if llm_result.confidence >= getattr(self._llm_intent_detector, '_confidence_threshold_low', 0.5):
                         pattern_result = self._detect_tool_intent_pattern_matching(user_input, context)
                         if (llm_result.requires_tool and pattern_result and 
-                            llm_result.primary_intent == pattern_result.get('primary_category')):
+                            llm_result.primary_intent == pattern_result.get('category')):
                             result = {
                                 'requires_tool': True,
                                 'category': llm_result.primary_intent,
@@ -481,7 +487,7 @@ class AIHandler:
             pattern_result = self._detect_tool_intent_pattern_matching(user_input, context)
             if pattern_result:
                 pattern_result['detection_method'] = 'pattern_matching_fallback'
-                logging.debug(f'[AIHandler] Pattern fallback: {pattern_result.get("primary_category")}')
+                logging.debug(f'[AIHandler] Pattern fallback: {pattern_result.get("category")}')
             return pattern_result
         
         except Exception as e:
@@ -636,7 +642,7 @@ class AIHandler:
         Handle a request that requires tool execution.
         """
         try:
-            primary_category = tool_intent.get('primary_category')
+            primary_category = tool_intent.get('category')
             logging.info(f'[AIHandler] Processing tool request for category: {primary_category}')
             
             # Recupera strumenti disponibili per categoria

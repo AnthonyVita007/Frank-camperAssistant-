@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any, List
 
 from .ai_processor import AIProcessor
 from .ai_response import AIResponse
+from .llm_intent_detector import LLMIntentDetector, IntentDetectionResult
 
 
 class AIHandler:
@@ -21,27 +22,33 @@ class AIHandler:
     
     This class serves as the interface between the main controller and the AI processor,
     providing validation, coordination, and logging for AI interactions. Now includes
-    MCP (Model Context Protocol) integration for tool-based interactions.
+    MCP (Model Context Protocol) integration for tool-based interactions and advanced
+    LLM-based intent recognition with pattern matching fallback.
     
     Attributes:
         _ai_processor (AIProcessor): The AI processor instance
         _is_enabled (bool): Whether AI processing is enabled
         _mcp_handler (Optional): The MCP handler for tool interactions
         _tool_detection_enabled (bool): Whether to detect tool usage intents
+        _llm_intent_detector (Optional[LLMIntentDetector]): LLM-based intent detector
+        _llm_intent_enabled (bool): Whether LLM intent detection is enabled
     """
     
     #----------------------------------------------------------------
     # INIZIALIZZAZIONE AI HANDLER CON SUPPORTO MCP
     #----------------------------------------------------------------
-    def __init__(self, ai_processor: Optional[AIProcessor] = None, mcp_handler: Optional = None) -> None: # type: ignore
+    def __init__(self, ai_processor: Optional[AIProcessor] = None, mcp_handler: Optional = None, llm_intent_enabled: bool = True, llm_intent_detector: Optional[LLMIntentDetector] = None) -> None: # type: ignore
         """
-        Initialize the AIHandler with optional MCP support.
+        Initialize the AIHandler with optional MCP support and LLM intent detection.
         
         Args:
             ai_processor (Optional[AIProcessor]): Custom AI processor instance.
                                                   If None, creates a default one.
             mcp_handler (Optional): MCP handler for tool interactions.
                                    If None, tool features will be disabled.
+            llm_intent_enabled (bool): Whether to enable LLM-based intent detection.
+            llm_intent_detector (Optional[LLMIntentDetector]): Pre-configured LLM intent detector.
+                                                              If provided, llm_intent_enabled is ignored.
         """
         try:
             self._ai_processor = ai_processor or AIProcessor()
@@ -51,10 +58,41 @@ class AIHandler:
             self._mcp_handler = mcp_handler
             self._tool_detection_enabled = mcp_handler is not None
             
+            # LLM Intent Detection Integration
+            if llm_intent_detector is not None:
+                # Use pre-configured detector
+                self._llm_intent_detector = llm_intent_detector
+                self._llm_intent_enabled = llm_intent_detector.is_enabled()
+                logging.info('[AIHandler] Using pre-configured LLM intent detector')
+            else:
+                # Create new detector if requested
+                self._llm_intent_enabled = llm_intent_enabled and self._is_enabled
+                self._llm_intent_detector = None
+                
+                if self._llm_intent_enabled:
+                    try:
+                        self._llm_intent_detector = LLMIntentDetector(
+                            ai_processor=self._ai_processor,
+                            enabled=True
+                        )
+                        if self._llm_intent_detector.is_enabled():
+                            logging.info('[AIHandler] LLM intent detection initialized successfully')
+                        else:
+                            logging.warning('[AIHandler] LLM intent detection initialized but not available')
+                            self._llm_intent_enabled = False
+                    except Exception as e:
+                        logging.error(f'[AIHandler] Failed to initialize LLM intent detection: {e}')
+                        self._llm_intent_enabled = False
+                        self._llm_intent_detector = None
+            
             if self._is_enabled:
                 logging.info('[AIHandler] AI handler initialized successfully')
                 if self._tool_detection_enabled:
                     logging.info('[AIHandler] MCP tool integration enabled')
+                    if self._llm_intent_enabled:
+                        logging.info('[AIHandler] Hybrid intent detection enabled (LLM + pattern matching)')
+                    else:
+                        logging.info('[AIHandler] Pattern matching intent detection enabled')
                 else:
                     logging.info('[AIHandler] MCP tool integration disabled (no MCP handler)')
             else:
@@ -66,6 +104,46 @@ class AIHandler:
             self._is_enabled = False
             self._mcp_handler = None
             self._tool_detection_enabled = False
+            self._llm_intent_enabled = False
+            self._llm_intent_detector = None
+    
+    @classmethod
+    def from_config(cls, config_path: Optional[str] = None, ai_processor: Optional[AIProcessor] = None, mcp_handler: Optional = None):
+        """
+        Create an AIHandler instance using configuration from config file.
+        
+        Args:
+            config_path (Optional[str]): Path to configuration file
+            ai_processor (Optional[AIProcessor]): Custom AI processor instance
+            mcp_handler (Optional): MCP handler for tool interactions
+            
+        Returns:
+            AIHandler: Configured AI handler instance
+        """
+        try:
+            from .llm_intent_config import create_llm_intent_detector_from_config
+            
+            # Create LLM intent detector from config
+            llm_intent_detector = create_llm_intent_detector_from_config(
+                ai_processor=ai_processor,
+                config_path=config_path
+            )
+            
+            # Create AI handler with configured detector
+            return cls(
+                ai_processor=ai_processor,
+                mcp_handler=mcp_handler,
+                llm_intent_detector=llm_intent_detector
+            )
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error creating AI handler from config: {e}')
+            # Fallback to default initialization
+            return cls(
+                ai_processor=ai_processor,
+                mcp_handler=mcp_handler,
+                llm_intent_enabled=False
+            )
     
     #----------------------------------------------------------------
     # GESTIONE RICHIESTE AI CON SUPPORTO MCP
@@ -140,13 +218,13 @@ class AIHandler:
     #----------------------------------------------------------------
     # RILEVAMENTO INTENTI PER STRUMENTI MCP
     #----------------------------------------------------------------
-    def _detect_tool_intent(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    def _detect_tool_intent_pattern_matching(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
-        Detect if the user input requires tool usage.
+        Detect if the user input requires tool usage using pattern matching.
         
-        This method analyzes the user input to determine if it contains
-        intents that would benefit from tool execution rather than
-        conversational AI.
+        This method analyzes the user input using simple keyword patterns to determine 
+        if it contains intents that would benefit from tool execution rather than
+        conversational AI. This is the fallback method for LLM-based detection.
         
         Args:
             user_input (str): The user's input text
@@ -156,8 +234,8 @@ class AIHandler:
             Optional[Dict[str, Any]]: Tool intent information if detected, None otherwise
         """
         try:
-            if not self._mcp_handler:
-                return None
+            # Pattern matching can work without MCP handler for intent detection
+            # The MCP handler is only needed for actual tool execution
             
             # Convert to lowercase for pattern matching
             input_lower = user_input.lower().strip()
@@ -214,6 +292,182 @@ class AIHandler:
             
         except Exception as e:
             logging.error(f'[AIHandler] Error detecting tool intent: {e}')
+            return None
+    
+    def _detect_tool_intent(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """
+        Detect if the user input requires tool usage using hybrid approach.
+        
+        This method implements the hybrid intent detection system:
+        1. Try LLM-based detection first (if enabled)
+        2. Use confidence thresholds to determine action:
+           - High confidence (>=0.8): Use LLM result
+           - Medium confidence (0.5-0.8): Combine with pattern matching
+           - Low confidence (<0.5): Fallback to pattern matching
+        3. Return structured intent information
+        
+        Args:
+            user_input (str): The user's input text
+            context (Optional[Dict[str, Any]]): Additional context
+            
+        Returns:
+            Optional[Dict[str, Any]]: Tool intent information if detected, None otherwise
+        """
+        try:
+            if not self._mcp_handler:
+                return None
+            
+            # Try LLM-based detection first if enabled
+            if self._llm_intent_enabled and self._llm_intent_detector:
+                try:
+                    # Get available tools for LLM context
+                    available_tools = None
+                    if self._mcp_handler:
+                        available_tool_info = self._mcp_handler.get_available_tools()
+                        available_tools = [tool.get('name') for tool in available_tool_info if tool.get('name')]
+                    
+                    # Perform LLM intent detection
+                    llm_result = self._llm_intent_detector.detect_intent(
+                        user_input=user_input,
+                        available_tools=available_tools,
+                        context=context
+                    )
+                    
+                    logging.debug(f'[AIHandler] LLM intent detection: confidence={llm_result.confidence:.2f}, requires_tool={llm_result.requires_tool}')
+                    
+                    # High confidence: use LLM result directly
+                    if llm_result.confidence >= self._llm_intent_detector._confidence_threshold_high:
+                        if llm_result.requires_tool and llm_result.primary_intent:
+                            result = self._convert_llm_result_to_legacy_format(llm_result)
+                            logging.info(f'[AIHandler] High confidence LLM detection: {llm_result.primary_intent} (confidence: {llm_result.confidence:.2f})')
+                            return result
+                        else:
+                            # High confidence that no tool is needed
+                            logging.debug('[AIHandler] High confidence LLM: no tool needed')
+                            return None
+                    
+                    # Medium confidence: combine with pattern matching
+                    elif llm_result.confidence >= self._llm_intent_detector._confidence_threshold_low:
+                        logging.debug('[AIHandler] Medium confidence LLM result, combining with pattern matching')
+                        
+                        # Get pattern matching result
+                        pattern_result = self._detect_tool_intent_pattern_matching(user_input, context)
+                        
+                        # Combine results if both agree
+                        if (llm_result.requires_tool and pattern_result and 
+                            llm_result.primary_intent == pattern_result.get('primary_category')):
+                            
+                            # Both methods agree - use enhanced LLM result
+                            combined_result = self._convert_llm_result_to_legacy_format(llm_result)
+                            combined_result['confidence'] = min(1.0, llm_result.confidence * 1.2)  # Boost confidence
+                            combined_result['detection_method'] = 'llm_pattern_combined'
+                            
+                            logging.info(f'[AIHandler] Combined detection agreement: {llm_result.primary_intent} (confidence: {combined_result["confidence"]:.2f})')
+                            return combined_result
+                        
+                        # If LLM says tool needed but pattern matching disagrees, trust LLM for medium confidence
+                        elif llm_result.requires_tool and llm_result.primary_intent:
+                            result = self._convert_llm_result_to_legacy_format(llm_result)
+                            result['detection_method'] = 'llm_medium_confidence'
+                            logging.info(f'[AIHandler] Medium confidence LLM detection (override): {llm_result.primary_intent}')
+                            return result
+                        
+                        # If pattern matching found something but LLM doesn't agree, trust pattern matching
+                        elif pattern_result:
+                            pattern_result['detection_method'] = 'pattern_override'
+                            logging.info(f'[AIHandler] Pattern matching override for medium confidence LLM')
+                            return pattern_result
+                    
+                    # Low confidence: fallback to pattern matching
+                    else:
+                        logging.debug(f'[AIHandler] Low confidence LLM result ({llm_result.confidence:.2f}), using pattern matching fallback')
+                        # Fall through to pattern matching below
+                        
+                except Exception as e:
+                    logging.error(f'[AIHandler] Error in LLM intent detection: {e}')
+                    # Fall through to pattern matching fallback
+            
+            # Fallback to pattern matching (always executed if LLM is disabled or fails)
+            pattern_result = self._detect_tool_intent_pattern_matching(user_input, context)
+            if pattern_result:
+                pattern_result['detection_method'] = 'pattern_matching_fallback'
+                logging.debug(f'[AIHandler] Pattern matching fallback: {pattern_result.get("primary_category")}')
+            
+            return pattern_result
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error in hybrid intent detection: {e}')
+            return None
+    
+    def _convert_llm_result_to_legacy_format(self, llm_result: IntentDetectionResult) -> Dict[str, Any]:
+        """
+        Convert LLM detection result to legacy format for compatibility.
+        
+        Args:
+            llm_result (IntentDetectionResult): LLM detection result
+            
+        Returns:
+            Dict[str, Any]: Legacy format intent information
+        """
+        try:
+            return {
+                'primary_category': llm_result.primary_intent,
+                'detected_patterns': llm_result.extracted_parameters,  # Use extracted params instead of patterns
+                'confidence': llm_result.confidence,
+                'raw_input': llm_result.extracted_parameters.get('raw_input', ''),
+                'llm_reasoning': llm_result.reasoning,
+                'llm_parameters': llm_result.extracted_parameters,
+                'multi_intent': llm_result.multi_intent,
+                'clarification_needed': llm_result.clarification_needed,
+                'clarification_questions': llm_result.clarification_questions,
+                'detection_method': 'llm'
+            }
+        except Exception as e:
+            logging.error(f'[AIHandler] Error converting LLM result to legacy format: {e}')
+            return {
+                'primary_category': llm_result.primary_intent,
+                'confidence': llm_result.confidence,
+                'detection_method': 'llm_error'
+            }
+    
+    def _detect_tool_intent_llm(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """
+        Detect tool intent using LLM analysis (direct method for compatibility).
+        
+        This method provides direct access to LLM-based intent detection for cases
+        where the hybrid approach is not needed.
+        
+        Args:
+            user_input (str): The user's input text
+            context (Optional[Dict[str, Any]]): Additional context
+            
+        Returns:
+            Optional[Dict[str, Any]]: Tool intent information if detected, None otherwise
+        """
+        try:
+            if not self._llm_intent_enabled or not self._llm_intent_detector:
+                return None
+            
+            # Get available tools
+            available_tools = None
+            if self._mcp_handler:
+                available_tool_info = self._mcp_handler.get_available_tools()
+                available_tools = [tool.get('name') for tool in available_tool_info if tool.get('name')]
+            
+            # Perform LLM detection
+            llm_result = self._llm_intent_detector.detect_intent(
+                user_input=user_input,
+                available_tools=available_tools,
+                context=context
+            )
+            
+            if llm_result.requires_tool and llm_result.primary_intent:
+                return self._convert_llm_result_to_legacy_format(llm_result)
+            
+            return None
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error in direct LLM intent detection: {e}')
             return None
     
     #----------------------------------------------------------------
@@ -620,9 +874,18 @@ class AIHandler:
         """
         return self._tool_detection_enabled and self._mcp_handler is not None
     
+    def is_llm_intent_enabled(self) -> bool:
+        """
+        Check if LLM-based intent detection is enabled and available.
+        
+        Returns:
+            bool: True if LLM intent detection is enabled and available, False otherwise
+        """
+        return self._llm_intent_enabled and self._llm_intent_detector is not None
+    
     def get_ai_status(self) -> Dict[str, Any]:
         """
-        Get the current status of the AI system including MCP integration.
+        Get the current status of the AI system including MCP and LLM intent detection.
         
         Returns:
             Dict[str, Any]: Status information about the AI system
@@ -632,7 +895,9 @@ class AIHandler:
             'processor_available': self._ai_processor is not None,
             'processor_status': 'unknown',
             'mcp_enabled': self._tool_detection_enabled,
-            'mcp_handler_available': self._mcp_handler is not None
+            'mcp_handler_available': self._mcp_handler is not None,
+            'llm_intent_enabled': self._llm_intent_enabled,
+            'llm_intent_detector_available': self._llm_intent_detector is not None
         }
         
         if self._ai_processor:
@@ -647,6 +912,13 @@ class AIHandler:
                 status['mcp_status'] = mcp_status
             except Exception as e:
                 status['mcp_status'] = f'error: {str(e)}'
+        
+        if self._llm_intent_detector:
+            try:
+                llm_intent_status = self._llm_intent_detector.get_status()
+                status['llm_intent_status'] = llm_intent_status
+            except Exception as e:
+                status['llm_intent_status'] = f'error: {str(e)}'
         
         return status
     

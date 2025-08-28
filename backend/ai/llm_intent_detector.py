@@ -253,12 +253,17 @@ class LLMIntentDetector:
             
             # Parse JSON response
             try:
-                intent_data = json.loads(response)
+                # Clean the response first to remove markdown formatting
+                cleaned_response = self._clean_json_response(response)
+                logging.debug(f'[LLMIntentDetector] Cleaned response: {cleaned_response[:200]}...')
+                
+                intent_data = json.loads(cleaned_response)
                 return self._parse_intent_response(intent_data, user_input)
                 
             except json.JSONDecodeError as e:
                 logging.error(f'[LLMIntentDetector] Failed to parse LLM JSON response: {e}')
                 logging.debug(f'[LLMIntentDetector] Raw response: {response[:200]}...')
+                logging.debug(f'[LLMIntentDetector] Cleaned response: {cleaned_response[:200] if "cleaned_response" in locals() else "N/A"}...')
                 return None
                 
         except Exception as e:
@@ -301,7 +306,11 @@ class LLMIntentDetector:
             
             # Parse parameter response
             try:
-                parameters = json.loads(response)
+                # Clean the response first to remove markdown formatting
+                cleaned_response = self._clean_json_response(response)
+                logging.debug(f'[LLMIntentDetector] Cleaned parameter response: {cleaned_response[:200]}...')
+                
+                parameters = json.loads(cleaned_response)
                 
                 # Validate parameters against schema if provided
                 validated_params = self._validate_parameters(parameters, tool_schema)
@@ -311,6 +320,8 @@ class LLMIntentDetector:
                 
             except json.JSONDecodeError as e:
                 logging.error(f'[LLMIntentDetector] Failed to parse parameter JSON: {e}')
+                logging.debug(f'[LLMIntentDetector] Raw parameter response: {response[:200]}...')
+                logging.debug(f'[LLMIntentDetector] Cleaned parameter response: {cleaned_response[:200] if "cleaned_response" in locals() else "N/A"}...')
                 return {}
                 
         except Exception as e:
@@ -353,6 +364,49 @@ class LLMIntentDetector:
     #----------------------------------------------------------------
     # METODI HELPER E UTILITY
     #----------------------------------------------------------------
+    
+    def _clean_json_response(self, response: str) -> str:
+        """
+        Clean JSON response by removing markdown code blocks and formatting.
+        
+        Args:
+            response (str): Raw response that may contain markdown
+            
+        Returns:
+            str: Cleaned JSON string ready for parsing
+        """
+        if not response:
+            return response
+        
+        response = response.strip()
+        
+        # Remove markdown code blocks
+        # Handle ```json...``` or ```...```
+        import re
+        
+        # Pattern to match code blocks with optional language specification
+        pattern = r'```(?:json)?\s*\n?(.*?)\n?```'
+        match = re.search(pattern, response, re.DOTALL)
+        
+        if match:
+            # Extract content from code block
+            cleaned = match.group(1).strip()
+            logging.debug(f'[LLMIntentDetector] Extracted JSON from code block')
+            return cleaned
+        
+        # If no code block found, try to find JSON within the text
+        # Look for { ... } pattern spanning multiple lines
+        json_pattern = r'\{.*\}'
+        json_match = re.search(json_pattern, response, re.DOTALL)
+        
+        if json_match:
+            cleaned = json_match.group(0).strip()
+            logging.debug(f'[LLMIntentDetector] Extracted JSON from response text')
+            return cleaned
+        
+        # Return as-is if no patterns found
+        logging.debug(f'[LLMIntentDetector] No JSON patterns found, returning response as-is')
+        return response
     
     def _make_llm_request(self, prompt: str) -> Optional[str]:
         """

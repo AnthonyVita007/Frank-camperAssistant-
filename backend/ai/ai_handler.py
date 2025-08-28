@@ -9,11 +9,17 @@ managing AI request validation, processing coordination, and logging.
 # IMPORT E TIPOLOGIE BASE
 #----------------------------------------------------------------
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 
-from .ai_processor import AIProcessor
+from .ai_processor import AIProcessor  # Il processor (può essere single-provider o dual-provider)
 from .ai_response import AIResponse
 from .llm_intent_detector import LLMIntentDetector, IntentDetectionResult
+
+# Import opzionale dell'Enum AIProvider (presente solo se l'AIProcessor è dual-provider)
+try:
+    from .ai_processor import AIProvider  # type: ignore
+except Exception:
+    AIProvider = None  # type: ignore
 
 
 class AIHandler:
@@ -21,7 +27,7 @@ class AIHandler:
     Handles AI request processing and integration with the main system.
     
     This class serves as the interface between the main controller and the AI processor,
-    providing validation, coordination, and logging for AI interactions. Now includes
+    providing validation, coordination, and logging for AI interactions. Includes
     MCP (Model Context Protocol) integration for tool-based interactions and advanced
     LLM-based intent recognition with pattern matching fallback.
     
@@ -35,40 +41,47 @@ class AIHandler:
     """
     
     #----------------------------------------------------------------
-    # INIZIALIZZAZIONE AI HANDLER CON SUPPORTO MCP
+    # INIZIALIZZAZIONE AI HANDLER CON SUPPORTO MCP E INTENT LLM
     #----------------------------------------------------------------
-    def __init__(self, ai_processor: Optional[AIProcessor] = None, mcp_handler: Optional = None, llm_intent_enabled: bool = True, llm_intent_detector: Optional[LLMIntentDetector] = None) -> None: # type: ignore
+    def __init__(
+        self, 
+        ai_processor: Optional[AIProcessor] = None, 
+        mcp_handler: Optional = None,  # type: ignore
+        llm_intent_enabled: bool = True, 
+        llm_intent_detector: Optional[LLMIntentDetector] = None  # type: ignore
+    ) -> None:
         """
         Initialize the AIHandler with optional MCP support and LLM intent detection.
         
         Args:
-            ai_processor (Optional[AIProcessor]): Custom AI processor instance.
-                                                  If None, creates a default one.
-            mcp_handler (Optional): MCP handler for tool interactions.
-                                   If None, tool features will be disabled.
+            ai_processor (Optional[AIProcessor]): Custom AI processor instance. If None, creates a default one.
+            mcp_handler (Optional): MCP handler for tool interactions. If None, tool features will be disabled.
             llm_intent_enabled (bool): Whether to enable LLM-based intent detection.
             llm_intent_detector (Optional[LLMIntentDetector]): Pre-configured LLM intent detector.
-                                                              If provided, llm_intent_enabled is ignored.
         """
         try:
+            #----------------------------------------------------------------
+            # PROCESSOR E STATO BASE
+            #----------------------------------------------------------------
             self._ai_processor = ai_processor or AIProcessor()
             self._is_enabled = self._ai_processor.is_available()
             
-            # MCP Integration
+            #----------------------------------------------------------------
+            # INTEGRAZIONE MCP (TOOLS)
+            #----------------------------------------------------------------
             self._mcp_handler = mcp_handler
             self._tool_detection_enabled = mcp_handler is not None
             
-            # LLM Intent Detection Integration
+            #----------------------------------------------------------------
+            # INTEGRAZIONE LLM INTENT DETECTION
+            #----------------------------------------------------------------
             if llm_intent_detector is not None:
-                # Use pre-configured detector
                 self._llm_intent_detector = llm_intent_detector
                 self._llm_intent_enabled = llm_intent_detector.is_enabled()
                 logging.info('[AIHandler] Using pre-configured LLM intent detector')
             else:
-                # Create new detector if requested
                 self._llm_intent_enabled = llm_intent_enabled and self._is_enabled
                 self._llm_intent_detector = None
-                
                 if self._llm_intent_enabled:
                     try:
                         self._llm_intent_detector = LLMIntentDetector(
@@ -85,6 +98,9 @@ class AIHandler:
                         self._llm_intent_enabled = False
                         self._llm_intent_detector = None
             
+            #----------------------------------------------------------------
+            # LOG DI STATO
+            #----------------------------------------------------------------
             if self._is_enabled:
                 logging.info('[AIHandler] AI handler initialized successfully')
                 if self._tool_detection_enabled:
@@ -108,37 +124,28 @@ class AIHandler:
             self._llm_intent_detector = None
     
     @classmethod
-    def from_config(cls, config_path: Optional[str] = None, ai_processor: Optional[AIProcessor] = None, mcp_handler: Optional = None):
+    def from_config(
+        cls, 
+        config_path: Optional[str] = None, 
+        ai_processor: Optional[AIProcessor] = None, 
+        mcp_handler: Optional = None # type: ignore
+    ):
         """
         Create an AIHandler instance using configuration from config file.
-        
-        Args:
-            config_path (Optional[str]): Path to configuration file
-            ai_processor (Optional[AIProcessor]): Custom AI processor instance
-            mcp_handler (Optional): MCP handler for tool interactions
-            
-        Returns:
-            AIHandler: Configured AI handler instance
         """
         try:
             from .llm_intent_config import create_llm_intent_detector_from_config
-            
-            # Create LLM intent detector from config
             llm_intent_detector = create_llm_intent_detector_from_config(
                 ai_processor=ai_processor,
                 config_path=config_path
             )
-            
-            # Create AI handler with configured detector
             return cls(
                 ai_processor=ai_processor,
                 mcp_handler=mcp_handler,
                 llm_intent_detector=llm_intent_detector
             )
-            
         except Exception as e:
             logging.error(f'[AIHandler] Error creating AI handler from config: {e}')
-            # Fallback to default initialization
             return cls(
                 ai_processor=ai_processor,
                 mcp_handler=mcp_handler,
@@ -146,23 +153,90 @@ class AIHandler:
             )
     
     #----------------------------------------------------------------
+    # API: CAMBIO PROVIDER AI (SUPPORTO SWITCH LOCALE ↔ GEMINI)
+    #----------------------------------------------------------------
+    def set_ai_provider(self, provider: Union[str, Any]) -> bool:
+        """
+        Switch to a different AI provider (if supported by AIProcessor).
+        
+        Args:
+            provider (Union[str, Any]): 'local' | 'gemini' | AIProvider enum (se disponibile)
+        
+        Returns:
+            bool: True se lo switch è avvenuto con successo, altrimenti False.
+        """
+        try:
+            if not self._ai_processor:
+                logging.warning('[AIHandler] Cannot switch provider: AI processor not available')
+                return False
+            
+            # Se l'AIProcessor non espone set_provider, non è dual-provider
+            if not hasattr(self._ai_processor, 'set_provider'):
+                logging.warning('[AIHandler] set_provider not supported by current AIProcessor')
+                return False
+            
+            # Normalizzazione provider
+            target = provider
+            if isinstance(provider, str):
+                prov_str = provider.strip().lower()
+                if AIProvider:
+                    if prov_str == 'local':
+                        target = AIProvider.LOCAL  # type: ignore
+                    elif prov_str == 'gemini':
+                        target = AIProvider.GEMINI  # type: ignore
+                    else:
+                        logging.warning(f'[AIHandler] Unknown provider string: {provider}')
+                        return False
+                else:
+                    # Se AIProvider non è disponibile, non possiamo convertire
+                    logging.warning('[AIHandler] AIProvider enum not available in AIProcessor module')
+                    return False
+            
+            # Esegui lo switch
+            success = self._ai_processor.set_provider(target)  # type: ignore
+            if success:
+                logging.info(f'[AIHandler] Switched AI provider to: {getattr(target, "value", str(target))}')
+                # Re-inizializza (opzionale) il detector degli intenti con il processor attuale
+                if self._llm_intent_enabled:
+                    try:
+                        self._llm_intent_detector = LLMIntentDetector(
+                            ai_processor=self._ai_processor,
+                            enabled=True
+                        )
+                    except Exception as e:
+                        logging.warning(f'[AIHandler] Could not reinitialize LLM intent detector after provider switch: {e}')
+                return True
+            
+            logging.warning('[AIHandler] AI provider switch failed in AIProcessor')
+            return False
+        
+        except Exception as e:
+            logging.error(f'[AIHandler] Error switching AI provider: {e}')
+            return False
+    
+    def get_current_ai_provider(self) -> Optional[Any]:
+        """
+        Get the currently active AI provider (if supported).
+        
+        Returns:
+            Optional[Any]: AIProvider enum o stringa identificativa; None se non disponibile.
+        """
+        try:
+            if not self._ai_processor or not hasattr(self._ai_processor, 'get_current_provider'):
+                return None
+            return self._ai_processor.get_current_provider()  # type: ignore
+        except Exception as e:
+            logging.error(f'[AIHandler] Error getting current AI provider: {e}')
+            return None
+    
+    #----------------------------------------------------------------
     # GESTIONE RICHIESTE AI CON SUPPORTO MCP
     #----------------------------------------------------------------
     def handle_ai_request(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> AIResponse:
         """
         Handle an AI request from the user with MCP tool detection.
-        
-        This method validates the input, detects if tools are needed, and either
-        processes the request through MCP tools or regular AI conversation.
-        
-        Args:
-            user_input (str): The user's input text
-            context (Optional[Dict[str, Any]]): Additional context for the request
-            
-        Returns:
-            AIResponse: The structured AI response
         """
-        # Validate input
+        # Validazione
         if not self._validate_input(user_input):
             logging.warning(f'[AIHandler] Invalid input received: "{user_input}"')
             return AIResponse(
@@ -172,7 +246,7 @@ class AIHandler:
                 message="Invalid input"
             )
         
-        # Check if AI is available
+        # Disponibilità AI
         if not self._is_enabled or not self._ai_processor:
             logging.warning('[AIHandler] AI processing requested but not available')
             return AIResponse(
@@ -182,28 +256,22 @@ class AIHandler:
                 message="AI system not available"
             )
         
-        # Log the request
         logging.info(f'[AIHandler] Processing AI request: "{user_input[:100]}..."')
         
         try:
-            # Step 1: Detect if this request needs tools
+            # Step 1: Intenti tool (se MCP abilitato)
             if self._tool_detection_enabled:
                 tool_intent = self._detect_tool_intent(user_input, context)
-                
                 if tool_intent:
-                    # Handle request through MCP system
                     return self._handle_tool_request(user_input, tool_intent, context)
             
-            # Step 2: Handle as regular conversational AI
+            # Step 2: Conversazione standard
             response = self._ai_processor.process_request(user_input, context)
-            
-            # Log the response
             if response.success:
-                logging.info(f'[AIHandler] AI request processed successfully')
+                logging.info('[AIHandler] AI request processed successfully')
                 logging.debug(f'[AIHandler] AI response: "{response.text[:100]}..."')
             else:
                 logging.warning(f'[AIHandler] AI request failed: {response.message}')
-            
             return response
             
         except Exception as e:
@@ -216,31 +284,18 @@ class AIHandler:
             )
     
     #----------------------------------------------------------------
-    # RILEVAMENTO INTENTI PER STRUMENTI MCP
+    # RILEVAMENTO INTENTI PER STRUMENTI MCP (IBRIDO)
     #----------------------------------------------------------------
-    def _detect_tool_intent_pattern_matching(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    def _detect_tool_intent_pattern_matching(
+        self, 
+        user_input: str, 
+        context: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Detect if the user input requires tool usage using pattern matching.
-        
-        This method analyzes the user input using simple keyword patterns to determine 
-        if it contains intents that would benefit from tool execution rather than
-        conversational AI. This is the fallback method for LLM-based detection.
-        
-        Args:
-            user_input (str): The user's input text
-            context (Optional[Dict[str, Any]]): Additional context
-            
-        Returns:
-            Optional[Dict[str, Any]]: Tool intent information if detected, None otherwise
         """
         try:
-            # Pattern matching can work without MCP handler for intent detection
-            # The MCP handler is only needed for actual tool execution
-            
-            # Convert to lowercase for pattern matching
             input_lower = user_input.lower().strip()
-            
-            # Define intent patterns and their corresponding tool categories
             intent_patterns = {
                 'navigation': [
                     'rotta', 'percorso', 'navigazione', 'direzione', 'strada',
@@ -257,144 +312,101 @@ class AIHandler:
                     'clima', 'nuvole', 'vento', 'temporale', 'neve'
                 ],
                 'maintenance': [
-                    'manutenzione', 'scadenza', 'tagliando', 'revisione', 
+                    'manutenzione', 'scadenza', 'tagliando', 'revisione',
                     'promemoria', 'controllo', 'sostituzione', 'filtro',
                     'cambio olio', 'freni'
                 ]
             }
             
-            # Check for intent matches
-            detected_intents = {}
-            
+            detected_intents: Dict[str, List[str]] = {}
             for category, patterns in intent_patterns.items():
                 for pattern in patterns:
                     if pattern in input_lower:
-                        if category not in detected_intents:
-                            detected_intents[category] = []
-                        detected_intents[category].append(pattern)
+                        detected_intents.setdefault(category, []).append(pattern)
             
-            # If we found intent patterns, return tool intent
             if detected_intents:
-                # Find the most likely intent (category with most matches)
                 primary_intent = max(detected_intents.keys(), key=lambda k: len(detected_intents[k]))
-                
-                tool_intent = {
+                return {
                     'primary_category': primary_intent,
                     'detected_patterns': detected_intents,
                     'confidence': len(detected_intents[primary_intent]) / len(intent_patterns[primary_intent]),
                     'raw_input': user_input
                 }
-                
-                logging.debug(f'[AIHandler] Detected tool intent: {primary_intent} (confidence: {tool_intent["confidence"]:.2f})')
-                return tool_intent
-            
             return None
-            
+        
         except Exception as e:
             logging.error(f'[AIHandler] Error detecting tool intent: {e}')
             return None
     
-    def _detect_tool_intent(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    def _detect_tool_intent(
+        self, 
+        user_input: str, 
+        context: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
         """
-        Detect if the user input requires tool usage using hybrid approach.
-        
-        This method implements the hybrid intent detection system:
-        1. Try LLM-based detection first (if enabled)
-        2. Use confidence thresholds to determine action:
-           - High confidence (>=0.8): Use LLM result
-           - Medium confidence (0.5-0.8): Combine with pattern matching
-           - Low confidence (<0.5): Fallback to pattern matching
-        3. Return structured intent information
-        
-        Args:
-            user_input (str): The user's input text
-            context (Optional[Dict[str, Any]]): Additional context
-            
-        Returns:
-            Optional[Dict[str, Any]]: Tool intent information if detected, None otherwise
+        Detect if the user input requires tool usage using hybrid approach:
+        1) LLM-based detection (se abilitato)
+        2) Pattern matching come fallback/integrazione
         """
         try:
             if not self._mcp_handler:
                 return None
             
-            # Try LLM-based detection first if enabled
+            # LLM-based detection
             if self._llm_intent_enabled and self._llm_intent_detector:
                 try:
-                    # Get available tools for LLM context
                     available_tools = None
                     if self._mcp_handler:
                         available_tool_info = self._mcp_handler.get_available_tools()
-                        available_tools = [tool.get('name') for tool in available_tool_info if tool.get('name')]
+                        available_tools = [t.get('name') for t in available_tool_info if t.get('name')]
                     
-                    # Perform LLM intent detection
                     llm_result = self._llm_intent_detector.detect_intent(
                         user_input=user_input,
                         available_tools=available_tools,
                         context=context
                     )
                     
-                    logging.debug(f'[AIHandler] LLM intent detection: confidence={llm_result.confidence:.2f}, requires_tool={llm_result.requires_tool}')
+                    logging.debug(f'[AIHandler] LLM intent detection: conf={llm_result.confidence:.2f}, requires_tool={llm_result.requires_tool}')
                     
-                    # High confidence: use LLM result directly
-                    if llm_result.confidence >= self._llm_intent_detector._confidence_threshold_high:
+                    # Alta confidenza
+                    if llm_result.confidence >= getattr(self._llm_intent_detector, '_confidence_threshold_high', 0.8):
                         if llm_result.requires_tool and llm_result.primary_intent:
                             result = self._convert_llm_result_to_legacy_format(llm_result)
-                            logging.info(f'[AIHandler] High confidence LLM detection: {llm_result.primary_intent} (confidence: {llm_result.confidence:.2f})')
+                            logging.info(f'[AIHandler] High confidence LLM detection: {llm_result.primary_intent}')
                             return result
-                        else:
-                            # High confidence that no tool is needed
-                            logging.debug('[AIHandler] High confidence LLM: no tool needed')
-                            return None
+                        return None
                     
-                    # Medium confidence: combine with pattern matching
-                    elif llm_result.confidence >= self._llm_intent_detector._confidence_threshold_low:
-                        logging.debug('[AIHandler] Medium confidence LLM result, combining with pattern matching')
-                        
-                        # Get pattern matching result
+                    # Media confidenza → combina con pattern
+                    if llm_result.confidence >= getattr(self._llm_intent_detector, '_confidence_threshold_low', 0.5):
                         pattern_result = self._detect_tool_intent_pattern_matching(user_input, context)
-                        
-                        # Combine results if both agree
                         if (llm_result.requires_tool and pattern_result and 
                             llm_result.primary_intent == pattern_result.get('primary_category')):
-                            
-                            # Both methods agree - use enhanced LLM result
-                            combined_result = self._convert_llm_result_to_legacy_format(llm_result)
-                            combined_result['confidence'] = min(1.0, llm_result.confidence * 1.2)  # Boost confidence
-                            combined_result['detection_method'] = 'llm_pattern_combined'
-                            
-                            logging.info(f'[AIHandler] Combined detection agreement: {llm_result.primary_intent} (confidence: {combined_result["confidence"]:.2f})')
-                            return combined_result
-                        
-                        # If LLM says tool needed but pattern matching disagrees, trust LLM for medium confidence
+                            combined = self._convert_llm_result_to_legacy_format(llm_result)
+                            combined['confidence'] = min(1.0, llm_result.confidence * 1.2)
+                            combined['detection_method'] = 'llm_pattern_combined'
+                            logging.info(f'[AIHandler] Combined agreement: {llm_result.primary_intent}')
+                            return combined
                         elif llm_result.requires_tool and llm_result.primary_intent:
-                            result = self._convert_llm_result_to_legacy_format(llm_result)
-                            result['detection_method'] = 'llm_medium_confidence'
-                            logging.info(f'[AIHandler] Medium confidence LLM detection (override): {llm_result.primary_intent}')
-                            return result
-                        
-                        # If pattern matching found something but LLM doesn't agree, trust pattern matching
+                            res = self._convert_llm_result_to_legacy_format(llm_result)
+                            res['detection_method'] = 'llm_medium_confidence'
+                            logging.info(f'[AIHandler] Medium confidence LLM detection (override)')
+                            return res
                         elif pattern_result:
                             pattern_result['detection_method'] = 'pattern_override'
-                            logging.info(f'[AIHandler] Pattern matching override for medium confidence LLM')
+                            logging.info('[AIHandler] Pattern matching override')
                             return pattern_result
                     
-                    # Low confidence: fallback to pattern matching
-                    else:
-                        logging.debug(f'[AIHandler] Low confidence LLM result ({llm_result.confidence:.2f}), using pattern matching fallback')
-                        # Fall through to pattern matching below
-                        
+                    # Bassa confidenza → pattern fallback
                 except Exception as e:
                     logging.error(f'[AIHandler] Error in LLM intent detection: {e}')
-                    # Fall through to pattern matching fallback
+                    # Continua su pattern fallback
             
-            # Fallback to pattern matching (always executed if LLM is disabled or fails)
             pattern_result = self._detect_tool_intent_pattern_matching(user_input, context)
             if pattern_result:
                 pattern_result['detection_method'] = 'pattern_matching_fallback'
-                logging.debug(f'[AIHandler] Pattern matching fallback: {pattern_result.get("primary_category")}')
-            
+                logging.debug(f'[AIHandler] Pattern fallback: {pattern_result.get("primary_category")}')
             return pattern_result
-            
+        
         except Exception as e:
             logging.error(f'[AIHandler] Error in hybrid intent detection: {e}')
             return None
@@ -402,17 +414,11 @@ class AIHandler:
     def _convert_llm_result_to_legacy_format(self, llm_result: IntentDetectionResult) -> Dict[str, Any]:
         """
         Convert LLM detection result to legacy format for compatibility.
-        
-        Args:
-            llm_result (IntentDetectionResult): LLM detection result
-            
-        Returns:
-            Dict[str, Any]: Legacy format intent information
         """
         try:
             return {
                 'primary_category': llm_result.primary_intent,
-                'detected_patterns': llm_result.extracted_parameters,  # Use extracted params instead of patterns
+                'detected_patterns': llm_result.extracted_parameters,
                 'confidence': llm_result.confidence,
                 'raw_input': llm_result.extracted_parameters.get('raw_input', ''),
                 'llm_reasoning': llm_result.reasoning,
@@ -423,52 +429,12 @@ class AIHandler:
                 'detection_method': 'llm'
             }
         except Exception as e:
-            logging.error(f'[AIHandler] Error converting LLM result to legacy format: {e}')
+            logging.error(f'[AIHandler] Error converting LLM result: {e}')
             return {
                 'primary_category': llm_result.primary_intent,
                 'confidence': llm_result.confidence,
                 'detection_method': 'llm_error'
             }
-    
-    def _detect_tool_intent_llm(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        """
-        Detect tool intent using LLM analysis (direct method for compatibility).
-        
-        This method provides direct access to LLM-based intent detection for cases
-        where the hybrid approach is not needed.
-        
-        Args:
-            user_input (str): The user's input text
-            context (Optional[Dict[str, Any]]): Additional context
-            
-        Returns:
-            Optional[Dict[str, Any]]: Tool intent information if detected, None otherwise
-        """
-        try:
-            if not self._llm_intent_enabled or not self._llm_intent_detector:
-                return None
-            
-            # Get available tools
-            available_tools = None
-            if self._mcp_handler:
-                available_tool_info = self._mcp_handler.get_available_tools()
-                available_tools = [tool.get('name') for tool in available_tool_info if tool.get('name')]
-            
-            # Perform LLM detection
-            llm_result = self._llm_intent_detector.detect_intent(
-                user_input=user_input,
-                available_tools=available_tools,
-                context=context
-            )
-            
-            if llm_result.requires_tool and llm_result.primary_intent:
-                return self._convert_llm_result_to_legacy_format(llm_result)
-            
-            return None
-            
-        except Exception as e:
-            logging.error(f'[AIHandler] Error in direct LLM intent detection: {e}')
-            return None
     
     #----------------------------------------------------------------
     # GESTIONE RICHIESTE TRAMITE STRUMENTI MCP
@@ -481,51 +447,29 @@ class AIHandler:
     ) -> AIResponse:
         """
         Handle a request that requires tool execution.
-        
-        This method coordinates between AI understanding and tool execution,
-        extracting parameters from natural language and executing appropriate tools.
-        
-        Args:
-            user_input (str): The user's input text
-            tool_intent (Dict[str, Any]): Detected tool intent information
-            context (Optional[Dict[str, Any]]): Additional context
-            
-        Returns:
-            AIResponse: Response from tool execution or error
         """
         try:
             primary_category = tool_intent.get('primary_category')
-            confidence = tool_intent.get('confidence', 0.0)
-            
             logging.info(f'[AIHandler] Processing tool request for category: {primary_category}')
             
-            # Get available tools for this category
+            # Recupera strumenti disponibili per categoria
             available_tools = self._mcp_handler.get_tools_by_category(primary_category)
-            
             if not available_tools:
                 logging.warning(f'[AIHandler] No tools available for category: {primary_category}')
-                # Fallback to conversational AI
                 return self._fallback_to_conversation(user_input, f"Categoria strumenti '{primary_category}' non disponibile")
             
-            # For now, use the first available tool in the category
-            # In a more sophisticated implementation, we would use AI to choose the best tool
             selected_tool = available_tools[0]
             tool_name = selected_tool.get('name')
-            
             if not tool_name:
-                logging.error(f'[AIHandler] Invalid tool information: {selected_tool}')
+                logging.error(f'[AIHandler] Invalid tool info: {selected_tool}')
                 return self._fallback_to_conversation(user_input, "Informazioni strumento non valide")
             
-            # Extract parameters using AI
             parameters = self._extract_tool_parameters(user_input, tool_name, selected_tool, context)
+            logging.info(f'[AIHandler] Executing tool "{tool_name}" with parameters: {parameters}')
             
-            # Execute the tool
-            logging.info(f'[AIHandler] Executing tool: {tool_name} with parameters: {parameters}')
             tool_result = self._mcp_handler.execute_tool(tool_name, parameters)
-            
-            # Convert tool result to AI response
             return self._convert_tool_result_to_ai_response(tool_result, tool_name, user_input)
-            
+        
         except Exception as e:
             logging.error(f'[AIHandler] Error handling tool request: {e}')
             return self._fallback_to_conversation(user_input, f"Errore nell'esecuzione dello strumento: {str(e)}")
@@ -539,39 +483,19 @@ class AIHandler:
     ) -> Dict[str, Any]:
         """
         Extract parameters for tool execution from natural language input.
-        
-        This method uses AI to understand the user's intent and extract
-        the specific parameters needed for tool execution.
-        
-        Args:
-            user_input (str): The user's input text
-            tool_name (str): Name of the tool to execute
-            tool_info (Dict[str, Any]): Information about the tool
-            context (Optional[Dict[str, Any]]): Additional context
-            
-        Returns:
-            Dict[str, Any]: Extracted parameters for tool execution
         """
         try:
-            # Get the tool's parameter schema
             schema = tool_info.get('parameters_schema', {})
             required_params = schema.get('required', [])
-            
-            # Simple parameter extraction based on tool type
-            # In a real implementation, this would use more sophisticated NLP
-            
-            parameters = {}
+            parameters: Dict[str, Any] = {}
             input_lower = user_input.lower()
             
-            # Navigation tool parameter extraction
+            # Navigation
             if 'navigation' in tool_name.lower() or 'route' in tool_name.lower():
-                # Extract destination
                 if 'destination' in required_params:
                     destination = self._extract_destination(user_input)
                     if destination:
                         parameters['destination'] = destination
-                
-                # Extract preferences
                 if 'preferences' in schema.get('properties', {}):
                     preferences = {}
                     if 'pedaggi' in input_lower and ('evita' in input_lower or 'senza' in input_lower):
@@ -581,16 +505,13 @@ class AIHandler:
                     if preferences:
                         parameters['preferences'] = preferences
             
-            # Weather tool parameter extraction
+            # Weather
             elif 'weather' in tool_name.lower() or 'meteo' in tool_name.lower():
                 if 'location' in required_params:
                     location = self._extract_location(user_input)
-                    if location:
-                        parameters['location'] = location
-                    else:
-                        parameters['location'] = 'current'  # Default to current location
+                    parameters['location'] = location if location else 'current'
             
-            # Vehicle tool parameter extraction
+            # Vehicle
             elif 'vehicle' in tool_name.lower():
                 if 'system' in schema.get('properties', {}):
                     if 'carburante' in input_lower or 'benzina' in input_lower:
@@ -602,13 +523,12 @@ class AIHandler:
                     else:
                         parameters['system'] = 'general'
             
-            # Add context if provided
             if context:
                 parameters['context'] = context
             
             logging.debug(f'[AIHandler] Extracted parameters for {tool_name}: {parameters}')
             return parameters
-            
+        
         except Exception as e:
             logging.error(f'[AIHandler] Error extracting tool parameters: {e}')
             return {}
@@ -616,56 +536,36 @@ class AIHandler:
     def _extract_destination(self, user_input: str) -> Optional[str]:
         """
         Extract destination from user input for navigation tools.
-        
-        Args:
-            user_input (str): The user's input text
-            
-        Returns:
-            Optional[str]: Extracted destination or None
         """
-        # Simple destination extraction patterns
-        # In a real implementation, this would use more sophisticated NLP
-        
-        patterns = [
-            r'(?:a |verso |per |in |su )?([A-Z][a-zA-Z\s]+?)(?:\s|$|,)',
-            r'(?:portami|andare|dirigere).*?(?:a |verso |per |in )([A-Z][a-zA-Z\s]+?)(?:\s|$|,)',
-            r'rotta.*?(?:per |verso |a )([A-Z][a-zA-Z\s]+?)(?:\s|$|,)'
-        ]
-        
         import re
+        patterns = [
+            r'(?:portami|andare|dirigere).*?(?:a |verso |per |in )([A-Z][a-zA-Z\s]+?)(?:\s|$|,)',
+            r'rotta.*?(?:per |verso |a )([A-Z][a-zA-Z\s]+?)(?:\s|$|,)',
+            r'(?:a |verso |per |in |su )?([A-Z][a-zA-Z\s]+?)(?:\s|$|,)'
+        ]
         for pattern in patterns:
             match = re.search(pattern, user_input)
             if match:
                 destination = match.group(1).strip()
-                if len(destination) > 2:  # Minimum length check
+                if len(destination) > 2:
                     return destination
-        
         return None
     
     def _extract_location(self, user_input: str) -> Optional[str]:
         """
         Extract location from user input for weather tools.
-        
-        Args:
-            user_input (str): The user's input text
-            
-        Returns:
-            Optional[str]: Extracted location or None
         """
-        # Simple location extraction for weather
-        patterns = [
-            r'(?:a |in |su |per )([A-Z][a-zA-Z\s]+?)(?:\s|$|,|\?)',
-            r'meteo.*?(?:a |in |di )([A-Z][a-zA-Z\s]+?)(?:\s|$|,|\?)'
-        ]
-        
         import re
+        patterns = [
+            r'meteo.*?(?:a |in |di )([A-Z][a-zA-Z\s]+?)(?:\s|$|,|\?)',
+            r'(?:a |in |su |per )([A-Z][a-zA-Z\s]+?)(?:\s|$|,|\?)'
+        ]
         for pattern in patterns:
             match = re.search(pattern, user_input)
             if match:
                 location = match.group(1).strip()
                 if len(location) > 2:
                     return location
-        
         return None
     
     def _convert_tool_result_to_ai_response(
@@ -676,19 +576,9 @@ class AIHandler:
     ) -> AIResponse:
         """
         Convert a tool execution result to an AIResponse.
-        
-        Args:
-            tool_result: The result from tool execution
-            tool_name (str): Name of the executed tool
-            original_input (str): The original user input
-            
-        Returns:
-            AIResponse: Converted AI response
         """
         try:
-            # Import here to avoid circular imports
             from ..mcp.mcp_tool import ToolResultStatus
-            
             if tool_result.status == ToolResultStatus.SUCCESS:
                 return AIResponse(
                     text=str(tool_result.data) if tool_result.data else tool_result.message,
@@ -717,7 +607,6 @@ class AIHandler:
                     message="Tool execution requires user confirmation"
                 )
             else:
-                # Error or other status
                 return AIResponse(
                     text=f"Si è verificato un problema: {tool_result.message}",
                     response_type='tool_error',
@@ -730,7 +619,6 @@ class AIHandler:
                     success=False,
                     message=f"Tool '{tool_name}' execution failed"
                 )
-                
         except Exception as e:
             logging.error(f'[AIHandler] Error converting tool result: {e}')
             return AIResponse(
@@ -743,28 +631,15 @@ class AIHandler:
     def _fallback_to_conversation(self, user_input: str, reason: str) -> AIResponse:
         """
         Fallback to regular conversational AI when tool execution fails.
-        
-        Args:
-            user_input (str): The original user input
-            reason (str): Reason for fallback
-            
-        Returns:
-            AIResponse: Conversational AI response
         """
         try:
             logging.info(f'[AIHandler] Falling back to conversational AI: {reason}')
-            
-            # Process as regular AI request
             response = self._ai_processor.process_request(user_input)
-            
-            # Add fallback information to metadata
             if response.metadata is None:
                 response.metadata = {}
             response.metadata['fallback_reason'] = reason
             response.metadata['was_tool_request'] = True
-            
             return response
-            
         except Exception as e:
             logging.error(f'[AIHandler] Error in fallback to conversation: {e}')
             return AIResponse(
@@ -775,122 +650,81 @@ class AIHandler:
             )
     
     #----------------------------------------------------------------
-    # STREAMING CON SUPPORTO MCP
+    # STREAMING CON SUPPORTO MCP (SOLO CONVERSAZIONI)
     #----------------------------------------------------------------
     def handle_ai_stream(self, user_input: str, context: Optional[Dict[str, Any]] = None):
         """
         Handle a streaming AI request from the user with MCP tool detection.
-        
-        This method provides streaming AI responses by yielding text chunks
-        as they are generated, enabling real-time response rendering.
-        Note: Tool execution is not streamed, only conversational responses.
-        
-        Args:
-            user_input (str): The user's input text
-            context (Optional[Dict[str, Any]]): Additional context for the request
-            
-        Yields:
-            str: Text chunks as they are generated by the AI
+        Tool execution is not streamed; only conversational responses are streamed.
         """
-        # Validate input
         if not self._validate_input(user_input):
             logging.warning(f'[AIHandler] Invalid input for streaming request: "{user_input}"')
             yield "Mi dispiace, non ho ricevuto una richiesta valida."
             return
         
-        # Check if AI is available
         if not self._is_enabled or not self._ai_processor:
             logging.warning('[AIHandler] AI streaming requested but not available')
             yield "Mi dispiace, il sistema AI non è disponibile al momento. Riprova più tardi."
             return
         
-        # Log the streaming request
         logging.info(f'[AIHandler] Processing streaming AI request: "{user_input[:100]}..."')
         
         try:
-            # Check for tool intent first
             if self._tool_detection_enabled:
                 tool_intent = self._detect_tool_intent(user_input, context)
-                
                 if tool_intent:
-                    # For tool requests, we don't stream - execute and return result
                     tool_response = self._handle_tool_request(user_input, tool_intent, context)
                     yield tool_response.text
                     return
             
-            # Process as streaming conversational AI
             for chunk in self._ai_processor.stream_request(user_input, context):
                 if chunk:
                     yield chunk
             
             logging.info('[AIHandler] Streaming AI request completed successfully')
-            
         except Exception as e:
             logging.error(f'[AIHandler] Unexpected error in streaming AI request: {e}')
             yield "Mi dispiace, si è verificato un errore imprevisto durante la generazione della risposta."
     
     #----------------------------------------------------------------
-    # METODI ESISTENTI (invariati)
+    # METODI DI SUPPORTO E STATO
     #----------------------------------------------------------------
     def _validate_input(self, user_input: str) -> bool:
         """
         Validate user input for AI processing.
-        
-        Args:
-            user_input (str): The user input to validate
-            
-        Returns:
-            bool: True if input is valid, False otherwise
         """
         if not user_input or not isinstance(user_input, str):
             return False
-        
-        # Check if input is not empty after stripping
         if not user_input.strip():
             return False
-        
-        # Check length limits (reasonable limits for AI processing)
-        if len(user_input.strip()) > 5000:  # 5000 character limit
+        if len(user_input.strip()) > 5000:
             logging.warning(f'[AIHandler] Input too long: {len(user_input)} characters')
             return False
-        
         return True
     
     def is_ai_enabled(self) -> bool:
         """
         Check if AI processing is enabled and available.
-        
-        Returns:
-            bool: True if AI is enabled and available, False otherwise
         """
         return self._is_enabled and self._ai_processor is not None
     
     def is_mcp_enabled(self) -> bool:
         """
         Check if MCP tool integration is enabled and available.
-        
-        Returns:
-            bool: True if MCP is enabled and available, False otherwise
         """
         return self._tool_detection_enabled and self._mcp_handler is not None
     
     def is_llm_intent_enabled(self) -> bool:
         """
         Check if LLM-based intent detection is enabled and available.
-        
-        Returns:
-            bool: True if LLM intent detection is enabled and available, False otherwise
         """
         return self._llm_intent_enabled and self._llm_intent_detector is not None
     
     def get_ai_status(self) -> Dict[str, Any]:
         """
         Get the current status of the AI system including MCP and LLM intent detection.
-        
-        Returns:
-            Dict[str, Any]: Status information about the AI system
         """
-        status = {
+        status: Dict[str, Any] = {
             'enabled': self._is_enabled,
             'processor_available': self._ai_processor is not None,
             'processor_status': 'unknown',
@@ -900,23 +734,30 @@ class AIHandler:
             'llm_intent_detector_available': self._llm_intent_detector is not None
         }
         
+        # Stato del processor e provider (se supportato)
         if self._ai_processor:
             try:
-                status['processor_status'] = 'available' if self._ai_processor.is_available() else 'unavailable'
+                if hasattr(self._ai_processor, 'is_available'):
+                    status['processor_status'] = 'available' if self._ai_processor.is_available() else 'unavailable'
+                # Provider details (dual-provider)
+                if hasattr(self._ai_processor, 'get_provider_status'):
+                    status['provider_status'] = self._ai_processor.get_provider_status()  # type: ignore
+                elif hasattr(self._ai_processor, 'get_model_info'):
+                    status['model_info'] = self._ai_processor.get_model_info()  # compatibilità single-provider
             except Exception as e:
                 status['processor_status'] = f'error: {str(e)}'
         
+        # Stato MCP
         if self._mcp_handler:
             try:
-                mcp_status = self._mcp_handler.get_system_status()
-                status['mcp_status'] = mcp_status
+                status['mcp_status'] = self._mcp_handler.get_system_status()
             except Exception as e:
                 status['mcp_status'] = f'error: {str(e)}'
         
+        # Stato LLM intent
         if self._llm_intent_detector:
             try:
-                llm_intent_status = self._llm_intent_detector.get_status()
-                status['llm_intent_status'] = llm_intent_status
+                status['llm_intent_status'] = self._llm_intent_detector.get_status()
             except Exception as e:
                 status['llm_intent_status'] = f'error: {str(e)}'
         
@@ -930,22 +771,15 @@ class AIHandler:
         self._is_enabled = False
         self._tool_detection_enabled = False
         
-        # Shutdown MCP handler if available
         if self._mcp_handler:
             try:
                 self._mcp_handler.shutdown()
             except Exception as e:
                 logging.error(f'[AIHandler] Error shutting down MCP handler: {e}')
-        
-        # Note: AIProcessor doesn't need explicit cleanup in this implementation
-        # but this method is here for future extensibility
     
     def restart_ai_processor(self) -> bool:
         """
         Restart the AI processor.
-        
-        Returns:
-            bool: True if restart was successful, False otherwise
         """
         try:
             logging.info('[AIHandler] Restarting AI processor')
@@ -953,12 +787,20 @@ class AIHandler:
             self._is_enabled = self._ai_processor.is_available()
             
             if self._is_enabled:
+                # Re-init detector se necessario
+                if self._llm_intent_enabled:
+                    try:
+                        self._llm_intent_detector = LLMIntentDetector(
+                            ai_processor=self._ai_processor,
+                            enabled=True
+                        )
+                    except Exception as e:
+                        logging.warning(f'[AIHandler] LLM Intent detector re-init failed: {e}')
                 logging.info('[AIHandler] AI processor restarted successfully')
                 return True
             else:
                 logging.warning('[AIHandler] AI processor restarted but not available')
                 return False
-                
         except Exception as e:
             logging.error(f'[AIHandler] Failed to restart AI processor: {e}')
             self._ai_processor = None

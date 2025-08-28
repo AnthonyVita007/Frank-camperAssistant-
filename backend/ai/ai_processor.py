@@ -1,62 +1,75 @@
 """
 AI Processor Module for Frank Camper Assistant.
 
-This module handles the communication with llama.cpp local server to process
-user requests and generate appropriate responses.
+This module handles dual AI processing: local llama.cpp server AND Google Gemini API,
+providing a unified interface with clear separation between local and cloud implementations.
 """
 
+#----------------------------------------------------------------
+# IMPORT E TIPOLOGIE BASE
+#----------------------------------------------------------------
 import logging
 import time
 import requests
 import json
-from typing import Optional, Dict, Any
+import os
+from typing import Optional, Dict, Any, Union
+from enum import Enum
 
 from .ai_response import AIResponse
 
 
+class AIProvider(Enum):
+    """Enumeration of available AI providers."""
+    LOCAL = "local"
+    GEMINI = "gemini"
+
+
 class AIProcessor:
     """
-    Processes AI requests using llama.cpp local server.
+    Dual AI processor supporting both local llama.cpp and Google Gemini API.
     
-    This class manages the communication with llama.cpp local server running at 127.0.0.1:8080,
-    handles errors, implements retry logic, and generates structured responses.
+    This class provides a unified interface for AI processing while maintaining
+    clear separation between local (llama.cpp) and cloud (Gemini) implementations.
+    The processor can switch between providers based on configuration or availability.
     
     Attributes:
-        _llamacpp_url (str): The base URL for the llama.cpp API endpoint
-        _model_name (str): Name of the local model to use
-        _max_retries (int): Maximum number of retry attempts
-        _timeout (float): Request timeout in seconds
-        _session (requests.Session): HTTP session for connection pooling
+        _current_provider (AIProvider): Currently active AI provider
+        _local_config (dict): Configuration for local llama.cpp
+        _gemini_config (dict): Configuration for Google Gemini API
+        _session (requests.Session): HTTP session for requests
+        _local_available (bool): Whether local AI is available
+        _gemini_available (bool): Whether Gemini API is available
     """
     
+    #----------------------------------------------------------------
+    # INIZIALIZZAZIONE E CONFIGURAZIONE DUAL-AI
+    #----------------------------------------------------------------
     def __init__(
         self,
+        provider: AIProvider = AIProvider.LOCAL,
         llamacpp_url: str = "http://127.0.0.1:8080/completion",
-        model_name: str = "phi3:mini",
+        llamacpp_model: str = "phi3:mini",
+        gemini_api_key: Optional[str] = None,
         max_retries: int = 3,
-        timeout: float = 60.0  # Aumentato timeout per llama.cpp
+        timeout: float = 60.0
     ) -> None:
         """
-        Initialize the AIProcessor with llama.cpp configuration.
+        Initialize the dual AI processor.
         
         Args:
-            llamacpp_url (str): URL for llama.cpp API endpoint (default: "http://127.0.0.1:8080/completion")
-            model_name (str): Name of the local model (default: "phi3:mini")
-            max_retries (int): Maximum retry attempts (default: 3)
-            timeout (float): Request timeout in seconds (default: 60.0)
+            provider (AIProvider): Default provider to use
+            llamacpp_url (str): URL for llama.cpp API endpoint
+            llamacpp_model (str): Name of the local model
+            gemini_api_key (Optional[str]): Google Gemini API key
+            max_retries (int): Maximum retry attempts
+            timeout (float): Request timeout in seconds
         """
-        #----------------------------------------------------------------
-        # INIZIALIZZAZIONE CONFIGURAZIONE LLAMA.CPP
-        #----------------------------------------------------------------
-        self._llamacpp_url = llamacpp_url
-        self._model_name = model_name
+        self._current_provider = provider
         self._max_retries = max_retries
         self._timeout = timeout
         
-        #----------------------------------------------------------------
-        # CONFIGURAZIONE SESSIONE HTTP OTTIMIZZATA
-        #----------------------------------------------------------------
-        # Create a persistent HTTP session for better performance
+        # Initialize HTTP session
         self._session = requests.Session()
         self._session.headers.update({
             'Content-Type': 'application/json',
@@ -64,49 +77,81 @@ class AIProcessor:
             'Connection': 'keep-alive'
         })
         
-        # Configurazione adapter per connection pooling ottimizzato
+        # Configure session adapter
+        self._configure_session_adapter()
+        
+        # Initialize local AI configuration
+        self._local_config = {
+            'url': llamacpp_url,
+            'model': llamacpp_model,
+            'enabled': True
+        }
+        
+        # Initialize Gemini API configuration
+        self._gemini_config = {
+            'api_key': gemini_api_key or os.getenv('GOOGLE_GEMINI_API_KEY'),
+            'model': 'gemini-1.5-flash',
+            'url': 'https://generativelanguage.googleapis.com/v1beta/models/',
+            'enabled': True
+        }
+        
+        # Test availability of both providers
+        self._local_available = self._test_local_connection()
+        self._gemini_available = self._test_gemini_connection()
+        
+        # Log initialization results
+        self._log_initialization_status()
+    
+    def _configure_session_adapter(self) -> None:
+        """Configure HTTP session adapter for optimal performance."""
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
         
-        # Strategia di retry a livello HTTP
         retry_strategy = Retry(
-            total=0,  # Gestiamo i retry manualmente
+            total=0,  # Handle retries manually
             backoff_factor=0,
             status_forcelist=[]
         )
         
         adapter = HTTPAdapter(
-            pool_connections=1,
-            pool_maxsize=1,
+            pool_connections=2,  # Support both local and cloud
+            pool_maxsize=2,
             max_retries=retry_strategy
         )
         
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
-        
-        #----------------------------------------------------------------
-        # TEST CONNESSIONE INIZIALE
-        #----------------------------------------------------------------
-        # Test connection during initialization
-        self._is_available = self._test_connection()
-        
-        if self._is_available:
-            logging.info(f'[AIProcessor] llama.cpp AI processor initialized successfully with model: {model_name}')
-        else:
-            logging.warning(f'[AIProcessor] llama.cpp AI processor initialized but connection to {llamacpp_url} failed')
     
-    def _test_connection(self) -> bool:
+    def _log_initialization_status(self) -> None:
+        """Log the initialization status of both AI providers."""
+        local_status = "✓ AVAILABLE" if self._local_available else "✗ UNAVAILABLE"
+        gemini_status = "✓ AVAILABLE" if self._gemini_available else "✗ UNAVAILABLE"
+        
+        logging.info(f'[AIProcessor] Dual AI processor initialized:')
+        logging.info(f'[AIProcessor] - Local llama.cpp: {local_status}')
+        logging.info(f'[AIProcessor] - Google Gemini: {gemini_status}')
+        logging.info(f'[AIProcessor] - Current provider: {self._current_provider.value}')
+        
+        if not self._local_available and not self._gemini_available:
+            logging.error('[AIProcessor] No AI providers available!')
+        elif self._current_provider == AIProvider.LOCAL and not self._local_available:
+            logging.warning('[AIProcessor] Local provider selected but not available')
+        elif self._current_provider == AIProvider.GEMINI and not self._gemini_available:
+            logging.warning('[AIProcessor] Gemini provider selected but not available')
+
+
+#----------------------------------------------------------------
+# SEZIONE: LOGICA LLAMA.CPP (LOCALE)
+#----------------------------------------------------------------
+
+    def _test_local_connection(self) -> bool:
         """
-        Test connection to llama.cpp server with optimized health check.
+        Test connection to local llama.cpp server.
         
         Returns:
-            bool: True if connection is successful, False otherwise
+            bool: True if local AI is available, False otherwise
         """
         try:
-            #----------------------------------------------------------------
-            # TEST HEALTH CHECK SEMPLIFICATO
-            #----------------------------------------------------------------
-            # Test with a minimal completion request optimized for speed
             test_payload = {
                 "prompt": "Hi",
                 "n_predict": 5,
@@ -115,41 +160,434 @@ class AIProcessor:
             }
             
             response = self._session.post(
-                self._llamacpp_url,
+                self._local_config['url'],
                 json=test_payload,
-                timeout=10  # Timeout ridotto per test
+                timeout=10
             )
             
             if response.status_code == 200:
-                logging.debug('[AIProcessor] llama.cpp server connection test successful')
+                logging.debug('[AIProcessor] Local llama.cpp connection test successful')
                 return True
             else:
-                logging.warning(f'[AIProcessor] llama.cpp server returned status code: {response.status_code}')
+                logging.warning(f'[AIProcessor] Local llama.cpp returned status: {response.status_code}')
                 return False
                 
         except requests.exceptions.RequestException as e:
-            logging.warning(f'[AIProcessor] Failed to connect to llama.cpp server: {e}')
+            logging.warning(f'[AIProcessor] Local llama.cpp connection failed: {e}')
             return False
         except Exception as e:
-            logging.error(f'[AIProcessor] Unexpected error testing llama.cpp connection: {e}')
+            logging.error(f'[AIProcessor] Unexpected error testing local connection: {e}')
             return False
+    
+    def _prepare_local_prompt(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Prepare prompt for local llama.cpp processing.
+        
+        Args:
+            user_input (str): User's input text
+            context (Optional[Dict[str, Any]]): Additional context
+            
+        Returns:
+            str: Formatted prompt for llama.cpp
+        """
+        system_message = """Sei Frank, assistente AI di bordo per viaggi in camper.
+        - Rispondi sempre in italiano naturale, corretto e scorrevole ma sii sintetico.
+        - Lunghezza: 1–3 frasi, salvo quando viene chiesto esplicitamente un elenco o una guida passo‑passo.
+        - Se la richiesta è ambigua, poni una o più domande di chiarimento.
+        - Usa unità metriche (km, °C, litri) e termini comuni in italiano, evitando anglicismi inutili.
+        """
+        
+        if context:
+            system_message += f"Contesto: {context}\n\n"
+        
+        return f"{system_message}Utente: {user_input}\n\nFrank:"
+    
+    def _make_local_request(self, prompt: str) -> Optional[str]:
+        """
+        Make request to local llama.cpp server.
+        
+        Args:
+            prompt (str): Formatted prompt
+            
+        Returns:
+            Optional[str]: Response text or None if failed
+        """
+        payload = {
+            "prompt": prompt,
+            "n_predict": 512,
+            "temperature": 0.1,
+            "top_p": 0.8,
+            "top_k": 40,
+            "repeat_penalty": 1.15,
+            "repeat_last_n": 128,
+            "stop": ["\nUtente:", "\n\nUtente:", "Utente:", "\n\n"],
+            "stream": False,
+            "cache_prompt": True
+        }
+        
+        try:
+            logging.debug('[AIProcessor] Sending request to local llama.cpp')
+            start_time = time.time()
+            
+            response = self._session.post(
+                self._local_config['url'],
+                json=payload,
+                timeout=self._timeout
+            )
+            
+            elapsed_time = time.time() - start_time
+            logging.debug(f'[AIProcessor] Local response time: {elapsed_time:.2f}s')
+            
+            response.raise_for_status()
+            response_data = response.json()
+            
+            if 'content' in response_data:
+                content = response_data['content'].strip()
+                content = self._clean_local_response(content)
+                return content
+            else:
+                logging.warning('[AIProcessor] Unexpected local response format')
+                return None
+                
+        except Exception as e:
+            logging.error(f'[AIProcessor] Local request error: {e}')
+            raise
+    
+    def _clean_local_response(self, content: str) -> str:
+        """
+        Clean response content from llama.cpp.
+        
+        Args:
+            content (str): Raw content from llama.cpp
+            
+        Returns:
+            str: Cleaned content
+        """
+        if not content:
+            return content
+        
+        # Remove common prefixes
+        prefixes_to_remove = ["Frank:", "Assistente:", "AI:"]
+        for prefix in prefixes_to_remove:
+            if content.startswith(prefix):
+                content = content[len(prefix):].strip()
+        
+        # Remove common suffixes
+        suffixes_to_remove = ["\nUtente:", "\n\nUtente:"]
+        for suffix in suffixes_to_remove:
+            if content.endswith(suffix):
+                content = content[:-len(suffix)].strip()
+        
+        # Normalize whitespace
+        import re
+        content = re.sub(r'\n{3,}', '\n\n', content)
+        content = re.sub(r' {2,}', ' ', content)
+        
+        return content.strip()
+    
+    def _make_local_stream_request(self, prompt: str):
+        """
+        Make streaming request to local llama.cpp server.
+        
+        Args:
+            prompt (str): Formatted prompt
+            
+        Yields:
+            str: Content chunks as received
+        """
+        payload = {
+            "prompt": prompt,
+            "n_predict": 192,
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "top_k": 40,
+            "repeat_penalty": 1.15,
+            "repeat_last_n": 128,
+            "stop": ["\nUtente:", "\n\nUtente:", "Utente:", "\n\n"],
+            "stream": True,
+            "cache_prompt": True
+        }
+        
+        try:
+            logging.debug('[AIProcessor] Starting local streaming request')
+            
+            response = self._session.post(
+                self._local_config['url'],
+                json=payload,
+                timeout=self._timeout,
+                stream=True
+            )
+            
+            response.raise_for_status()
+            
+            chunk_count = 0
+            for raw_chunk in response.iter_lines(decode_unicode=True):
+                if raw_chunk and raw_chunk.startswith('data: '):
+                    data_chunk = raw_chunk[6:]
+                    
+                    if data_chunk.strip() == '[DONE]':
+                        break
+                    
+                    try:
+                        chunk_data = json.loads(data_chunk)
+                        if 'content' in chunk_data:
+                            content = chunk_data['content']
+                            if content:
+                                chunk_count += 1
+                                yield self._clean_local_streaming_chunk(content)
+                    except json.JSONDecodeError:
+                        continue
+            
+            logging.debug(f'[AIProcessor] Local streaming completed: {chunk_count} chunks')
+            
+        except Exception as e:
+            logging.error(f'[AIProcessor] Local streaming error: {e}')
+            raise
+    
+    def _clean_local_streaming_chunk(self, chunk: str) -> str:
+        """Clean streaming chunk from llama.cpp."""
+        if not chunk:
+            return chunk
+        
+        prefixes_to_remove = ["Frank:", "Assistente:", "AI:"]
+        for prefix in prefixes_to_remove:
+            if chunk.startswith(prefix):
+                chunk = chunk[len(prefix):].strip()
+                break
+        
+        return chunk
+
+
+#----------------------------------------------------------------
+# SEZIONE: LOGICA GOOGLE GEMINI (CLOUD API)
+#----------------------------------------------------------------
+
+    def _test_gemini_connection(self) -> bool:
+        """
+        Test connection to Google Gemini API.
+        
+        Returns:
+            bool: True if Gemini API is available, False otherwise
+        """
+        if not self._gemini_config['api_key']:
+            logging.warning('[AIProcessor] No Gemini API key provided')
+            return False
+        
+        try:
+            # Simple test request to Gemini
+            url = f"{self._gemini_config['url']}{self._gemini_config['model']}:generateContent"
+            
+            headers = {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': self._gemini_config['api_key']
+            }
+            
+            test_payload = {
+                "contents": [{
+                    "parts": [{"text": "Hello"}]
+                }],
+                "generationConfig": {
+                    "maxOutputTokens": 10,
+                    "temperature": 0.1
+                }
+            }
+            
+            response = self._session.post(
+                url,
+                headers=headers,
+                json=test_payload,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                logging.debug('[AIProcessor] Gemini API connection test successful')
+                return True
+            else:
+                logging.warning(f'[AIProcessor] Gemini API returned status: {response.status_code}')
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            logging.warning(f'[AIProcessor] Gemini API connection failed: {e}')
+            return False
+        except Exception as e:
+            logging.error(f'[AIProcessor] Unexpected error testing Gemini connection: {e}')
+            return False
+    
+    def _prepare_gemini_prompt(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Prepare prompt for Google Gemini API.
+        
+        Args:
+            user_input (str): User's input text
+            context (Optional[Dict[str, Any]]): Additional context
+            
+        Returns:
+            str: Formatted prompt for Gemini
+        """
+        system_message = """Sei Frank, assistente AI di bordo per viaggi in camper.
+        - Rispondi sempre in italiano naturale, corretto e scorrevole.
+        - Sii conciso ma completo nelle tue spiegazioni.
+        - Se la richiesta è ambigua, poni domande di chiarimento.
+        - Usa unità metriche (km, °C, litri) e terminologia italiana.
+        - Mantieni un tono amichevole e professionale.
+        """
+        
+        if context:
+            system_message += f"\n\nContesto: {context}"
+        
+        return f"{system_message}\n\nRichiesta dell'utente: {user_input}\n\nRisposta di Frank:"
+    
+    def _make_gemini_request(self, prompt: str) -> Optional[str]:
+        """
+        Make request to Google Gemini API.
+        
+        Args:
+            prompt (str): Formatted prompt
+            
+        Returns:
+            Optional[str]: Response text or None if failed
+        """
+        if not self._gemini_config['api_key']:
+            raise Exception("Gemini API key not available")
+        
+        url = f"{self._gemini_config['url']}{self._gemini_config['model']}:generateContent"
+        
+        headers = {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': self._gemini_config['api_key']
+        }
+        
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }],
+            "generationConfig": {
+                "maxOutputTokens": 1024,
+                "temperature": 0.7,
+                "topP": 0.8,
+                "topK": 64
+            },
+            "safetySettings": [
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH", 
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                }
+            ]
+        }
+        
+        try:
+            logging.debug('[AIProcessor] Sending request to Gemini API')
+            start_time = time.time()
+            
+            response = self._session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=self._timeout
+            )
+            
+            elapsed_time = time.time() - start_time
+            logging.debug(f'[AIProcessor] Gemini response time: {elapsed_time:.2f}s')
+            
+            response.raise_for_status()
+            response_data = response.json()
+            
+            # Extract text from Gemini response
+            if 'candidates' in response_data and response_data['candidates']:
+                candidate = response_data['candidates'][0]
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    parts = candidate['content']['parts']
+                    if parts and 'text' in parts[0]:
+                        content = parts[0]['text'].strip()
+                        return self._clean_gemini_response(content)
+            
+            logging.warning('[AIProcessor] Unexpected Gemini response format')
+            return None
+            
+        except Exception as e:
+            logging.error(f'[AIProcessor] Gemini request error: {e}')
+            raise
+    
+    def _clean_gemini_response(self, content: str) -> str:
+        """
+        Clean response content from Gemini API.
+        
+        Args:
+            content (str): Raw content from Gemini
+            
+        Returns:
+            str: Cleaned content
+        """
+        if not content:
+            return content
+        
+        # Remove common AI response prefixes
+        prefixes_to_remove = ["Frank:", "Risposta di Frank:", "Assistente:", "AI:"]
+        for prefix in prefixes_to_remove:
+            if content.startswith(prefix):
+                content = content[len(prefix):].strip()
+        
+        return content.strip()
+
+
+#----------------------------------------------------------------
+# SEZIONE: ORCHESTRAZIONE E ROUTING
+#----------------------------------------------------------------
+
+    def set_provider(self, provider: AIProvider) -> bool:
+        """
+        Switch to a different AI provider.
+        
+        Args:
+            provider (AIProvider): Provider to switch to
+            
+        Returns:
+            bool: True if switch was successful, False otherwise
+        """
+        old_provider = self._current_provider
+        
+        # Check if target provider is available
+        if provider == AIProvider.LOCAL and not self._local_available:
+            logging.warning('[AIProcessor] Cannot switch to local: not available')
+            return False
+        elif provider == AIProvider.GEMINI and not self._gemini_available:
+            logging.warning('[AIProcessor] Cannot switch to Gemini: not available')
+            return False
+        
+        self._current_provider = provider
+        logging.info(f'[AIProcessor] Switched from {old_provider.value} to {provider.value}')
+        return True
+    
+    def get_current_provider(self) -> AIProvider:
+        """Get the currently active AI provider."""
+        return self._current_provider
     
     def process_request(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> AIResponse:
         """
-        Process a user request using llama.cpp local LLM.
+        Process user request using the current AI provider.
         
         Args:
-            user_input (str): The user's input text
-            context (Optional[Dict[str, Any]]): Additional context for the request
+            user_input (str): User's input text
+            context (Optional[Dict[str, Any]]): Additional context
             
         Returns:
-            AIResponse: The structured AI response
+            AIResponse: Structured AI response
         """
-        #----------------------------------------------------------------
-        # VALIDAZIONE INPUT UTENTE
-        #----------------------------------------------------------------
+        # Input validation
         if not user_input or not isinstance(user_input, str):
-            logging.warning('[AIProcessor] Received empty or invalid user input')
+            logging.warning('[AIProcessor] Invalid input received')
             return AIResponse(
                 text="Mi dispiace, non ho ricevuto una richiesta valida.",
                 response_type='error',
@@ -159,7 +597,7 @@ class AIProcessor:
         
         user_input = user_input.strip()
         if not user_input:
-            logging.warning('[AIProcessor] Received empty user input after stripping')
+            logging.warning('[AIProcessor] Empty input received')
             return AIResponse(
                 text="Mi dispiace, la tua richiesta sembra essere vuota.",
                 response_type='error',
@@ -167,246 +605,137 @@ class AIProcessor:
                 message="Empty user input"
             )
         
-        logging.info(f'[AIProcessor] Processing user request: "{user_input[:100]}..."')
+        logging.info(f'[AIProcessor] Processing request with {self._current_provider.value}: "{user_input[:100]}..."')
         
-        #----------------------------------------------------------------
-        # VERIFICA DISPONIBILITÀ LLAMA.CPP
-        #----------------------------------------------------------------
-        # Check if llama.cpp is available
-        if not self._is_available:
-            logging.error('[AIProcessor] llama.cpp server not available')
-            return AIResponse(
-                text="Mi dispiace, il sistema AI locale non è disponibile al momento. Verifica che llama.cpp sia in esecuzione.",
-                response_type='error',
-                success=False,
-                message="llama.cpp server not available"
-            )
-        
-        #----------------------------------------------------------------
-        # ELABORAZIONE CON LOGICA DI RETRY OTTIMIZZATA
-        #----------------------------------------------------------------
-        # Process the request with retry logic
+        # Route to appropriate provider
         for attempt in range(self._max_retries):
             try:
-                # Prepare the prompt for llama.cpp
-                formatted_prompt = self._prepare_prompt(user_input, context)
-                
-                # Make request to llama.cpp
-                response_text = self._make_llamacpp_request(formatted_prompt)
-                
-                if response_text:
-                    return self._create_success_response(response_text, user_input, context)
+                if self._current_provider == AIProvider.LOCAL:
+                    return self._process_with_local(user_input, context)
+                elif self._current_provider == AIProvider.GEMINI:
+                    return self._process_with_gemini(user_input, context)
                 else:
-                    logging.warning(f'[AIProcessor] Empty response from llama.cpp (attempt {attempt + 1})')
-                    if attempt < self._max_retries - 1:
-                        time.sleep(2)  # Pausa più lunga per llama.cpp
-                        continue
-                    else:
-                        return self._create_error_response("Nessuna risposta ricevuta dall'AI locale")
-                        
-            except requests.exceptions.Timeout as e:
-                logging.error(f'[AIProcessor] Timeout in llama.cpp request (attempt {attempt + 1}): {e}')
-                if attempt < self._max_retries - 1:
-                    time.sleep(3 + (attempt * 2))  # Backoff più aggressivo
-                    continue
-                else:
-                    return self._create_error_response(f"Timeout nella comunicazione con l'AI locale: {str(e)}")
-                    
-            except requests.exceptions.RequestException as e:
-                logging.error(f'[AIProcessor] Network error in llama.cpp request (attempt {attempt + 1}): {e}')
-                if attempt < self._max_retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-                    continue
-                else:
-                    return self._create_error_response(f"Errore di rete nella comunicazione con l'AI locale: {str(e)}")
+                    return self._create_error_response(f"Unknown provider: {self._current_provider}")
                     
             except Exception as e:
-                logging.error(f'[AIProcessor] Unexpected error in llama.cpp request (attempt {attempt + 1}): {e}')
+                logging.error(f'[AIProcessor] Attempt {attempt + 1} failed: {e}')
                 if attempt < self._max_retries - 1:
                     time.sleep(2 ** attempt)  # Exponential backoff
                     continue
                 else:
-                    return self._create_error_response(f"Errore imprevisto nella comunicazione con l'AI locale: {str(e)}")
+                    return self._create_error_response(f"All attempts failed: {str(e)}")
         
-        # This should never be reached, but just in case
-        return self._create_error_response("Errore sconosciuto nel processamento della richiesta")
+        return self._create_error_response("Unknown error in request processing")
     
-    def _prepare_prompt(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def _process_with_local(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> AIResponse:
+        """Process request using local llama.cpp."""
+        if not self._local_available:
+            raise Exception("Local AI not available")
+        
+        formatted_prompt = self._prepare_local_prompt(user_input, context)
+        response_text = self._make_local_request(formatted_prompt)
+        
+        if response_text:
+            return self._create_success_response(
+                response_text, 
+                user_input, 
+                context, 
+                AIProvider.LOCAL
+            )
+        else:
+            raise Exception("Empty response from local AI")
+    
+    def _process_with_gemini(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> AIResponse:
+        """Process request using Google Gemini API."""
+        if not self._gemini_available:
+            raise Exception("Gemini API not available")
+        
+        formatted_prompt = self._prepare_gemini_prompt(user_input, context)
+        response_text = self._make_gemini_request(formatted_prompt)
+        
+        if response_text:
+            return self._create_success_response(
+                response_text, 
+                user_input, 
+                context, 
+                AIProvider.GEMINI
+            )
+        else:
+            raise Exception("Empty response from Gemini API")
+    
+    def stream_request(self, user_input: str, context: Optional[Dict[str, Any]] = None):
         """
-        Prepare prompt text for llama.cpp completion API with optimized structure.
+        Process user request with streaming support.
         
         Args:
-            user_input (str): The user's input
+            user_input (str): User's input text
             context (Optional[Dict[str, Any]]): Additional context
             
-        Returns:
-            str: Formatted prompt for llama.cpp
+        Yields:
+            str: Text chunks as they are generated
         """
-        #----------------------------------------------------------------
-        # COSTRUZIONE PROMPT OTTIMIZZATO PER LLAMA.CPP
-        #----------------------------------------------------------------
-        # Base system message for Frank - ottimizzato per brevità
-        system_message = """Sei Frank, assistente AI di bordo per viaggi in camper.
-        - Rispondi sempre in italiano naturale, corretto e scorrevole ma sii sintetico.
-        - Lunghezza: 1–3 frasi, salvo quando viene chiesto esplicitamente un elenco o una guida passo‑passo.
-        - Se la richiesta è ambigua, poni una o più domande di chiarimento.
-        - Usa unità metriche (km, °C, litri) e termini comuni in italiano, evitando anglicismi inutili.
-        """
+        # Input validation
+        if not user_input or not isinstance(user_input, str):
+            yield "Mi dispiace, non ho ricevuto una richiesta valida."
+            return
         
-        # Add context if provided
-        if context:
-            system_message += f"Contesto: {context}\n\n"
+        user_input = user_input.strip()
+        if not user_input:
+            yield "Mi dispiace, la tua richiesta sembra essere vuota."
+            return
         
-        # Format the complete prompt con stop tokens chiari
-        formatted_prompt = f"{system_message}Utente: {user_input}\n\nFrank:"
-        
-        return formatted_prompt
-    
-    def _make_llamacpp_request(self, prompt: str) -> Optional[str]:
-        """
-        Make a request to llama.cpp completion API with optimized parameters.
-        
-        Args:
-            prompt (str): The formatted prompt for completion
-            
-        Returns:
-            Optional[str]: The response text from llama.cpp, or None if failed
-        """
-        #----------------------------------------------------------------
-        # CONFIGURAZIONE PAYLOAD OTTIMIZZATO PER LLAMA.CPP
-        #----------------------------------------------------------------
-        payload = {
-            "prompt": prompt,
-            "n_predict": 512,  # Ridotto da 512 a 192 per risposte più veloci
-            "temperature": 0.1,
-            "top_p": 0.8,
-            "top_k": 40,
-            "repeat_penalty": 1.15,  # Aumentato per evitare ripetizioni
-            "repeat_last_n": 128,
-            "stop": ["\nUtente:", "\n\nUtente:", "Utente:", "\n\n"],
-            "stream": False,
-            "cache_prompt": True  # Abilita cache se supportata
-        }
+        logging.info(f'[AIProcessor] Streaming request with {self._current_provider.value}: "{user_input[:100]}..."')
         
         try:
-            logging.debug(f'[AIProcessor] Sending request to llama.cpp: {self._llamacpp_url}')
-            
-            #----------------------------------------------------------------
-            # INVIO RICHIESTA HTTP CON MONITORING TEMPO
-            #----------------------------------------------------------------
-            start_time = time.time()
-            
-            response = self._session.post(
-                self._llamacpp_url,
-                json=payload,
-                timeout=self._timeout
-            )
-            
-            elapsed_time = time.time() - start_time
-            logging.debug(f'[AIProcessor] llama.cpp response time: {elapsed_time:.2f}s')
-            
-            response.raise_for_status()  # Raise exception for HTTP errors
-            
-            #----------------------------------------------------------------
-            # PARSING RISPOSTA JSON MIGLIORATO
-            #----------------------------------------------------------------
-            # Parse JSON response
-            response_data = response.json()
-            
-            # Extract content from llama.cpp response
-            if 'content' in response_data:
-                content = response_data['content'].strip()
+            if self._current_provider == AIProvider.LOCAL:
+                if not self._local_available:
+                    yield "Il sistema AI locale non è disponibile."
+                    return
                 
-                # Pulizia aggiuntiva del contenuto
-                content = self._clean_response_content(content)
+                formatted_prompt = self._prepare_local_prompt(user_input, context)
+                for chunk in self._make_local_stream_request(formatted_prompt):
+                    if chunk:
+                        yield chunk
+                        
+            elif self._current_provider == AIProvider.GEMINI:
+                # Note: Gemini streaming not implemented in this version
+                # Fall back to non-streaming
+                yield "Elaborazione in corso con Gemini..."
+                response = self._process_with_gemini(user_input, context)
+                yield response.text
                 
-                logging.debug(f'[AIProcessor] Received response from llama.cpp: "{content[:100]}..."')
-                return content
             else:
-                logging.warning('[AIProcessor] Unexpected response format from llama.cpp')
-                logging.debug(f'[AIProcessor] Response data: {response_data}')
-                return None
+                yield f"Provider sconosciuto: {self._current_provider.value}"
                 
-        except requests.exceptions.Timeout:
-            logging.error(f'[AIProcessor] Timeout after {self._timeout} seconds')
-            raise
-        except requests.exceptions.ConnectionError:
-            logging.error('[AIProcessor] Connection error - is llama.cpp running?')
-            raise
-        except requests.exceptions.HTTPError as e:
-            logging.error(f'[AIProcessor] HTTP error: {e}')
-            raise
-        except json.JSONDecodeError as e:
-            logging.error(f'[AIProcessor] Failed to parse JSON response: {e}')
-            raise
         except Exception as e:
-            logging.error(f'[AIProcessor] Unexpected error in llama.cpp request: {e}')
-            raise
-    
-    def _clean_response_content(self, content: str) -> str:
-        """
-        Clean and optimize response content from llama.cpp.
-        
-        Args:
-            content (str): Raw content from llama.cpp
-            
-        Returns:
-            str: Cleaned content
-        """
-        #----------------------------------------------------------------
-        # PULIZIA CONTENUTO RISPOSTA
-        #----------------------------------------------------------------
-        if not content:
-            return content
-        
-        # Rimuovi prefissi comuni
-        prefixes_to_remove = ["Frank:", "Assistente:", "AI:"]
-        for prefix in prefixes_to_remove:
-            if content.startswith(prefix):
-                content = content[len(prefix):].strip()
-        
-        # Rimuovi suffissi comuni
-        suffixes_to_remove = ["\nUtente:", "\n\nUtente:"]
-        for suffix in suffixes_to_remove:
-            if content.endswith(suffix):
-                content = content[:-len(suffix)].strip()
-        
-        # Normalizza spazi multipli
-        import re
-        content = re.sub(r'\n{3,}', '\n\n', content)  # Max 2 newlines consecutive
-        content = re.sub(r' {2,}', ' ', content)      # Max 1 space consecutive
-        
-        return content.strip()
+            logging.error(f'[AIProcessor] Streaming error: {e}')
+            yield f"Si è verificato un errore durante la generazione: {str(e)}"
     
     def _create_success_response(
         self, 
         ai_text: str, 
         user_input: str, 
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]], 
+        provider: AIProvider
     ) -> AIResponse:
-        """
-        Create a successful AI response.
-        
-        Args:
-            ai_text (str): The AI-generated text
-            user_input (str): The original user input
-            context (Optional[Dict[str, Any]]): The request context
-            
-        Returns:
-            AIResponse: The structured success response
-        """
-        #----------------------------------------------------------------
-        # COSTRUZIONE METADATA RISPOSTA DETTAGLIATA
-        #----------------------------------------------------------------
+        """Create a successful AI response."""
         metadata = {
-            'model': self._model_name,
-            'provider': 'llamacpp_local',
+            'provider': provider.value,
             'user_input_length': len(user_input),
             'response_length': len(ai_text),
-            'timestamp': time.time(),
-            'llamacpp_url': self._llamacpp_url,
-            'timeout_used': self._timeout
+            'timestamp': time.time()
         }
+        
+        if provider == AIProvider.LOCAL:
+            metadata.update({
+                'model': self._local_config['model'],
+                'llamacpp_url': self._local_config['url']
+            })
+        elif provider == AIProvider.GEMINI:
+            metadata.update({
+                'model': self._gemini_config['model'],
+                'api_version': 'v1beta'
+            })
         
         if context:
             metadata['context'] = context
@@ -416,356 +745,103 @@ class AIProcessor:
             response_type='conversational',
             metadata=metadata,
             success=True,
-            message='AI response generated successfully via llama.cpp'
+            message=f'AI response generated successfully via {provider.value}'
         )
     
     def _create_error_response(self, error_message: str) -> AIResponse:
-        """
-        Create an error AI response.
-        
-        Args:
-            error_message (str): The error message
-            
-        Returns:
-            AIResponse: The structured error response
-        """
-        #----------------------------------------------------------------
-        # COSTRUZIONE RISPOSTA DI ERRORE
-        #----------------------------------------------------------------
+        """Create an error AI response."""
         return AIResponse(
             text="Mi dispiace, si è verificato un problema nel processare la tua richiesta. Riprova più tardi.",
             response_type='error',
             metadata={
-                'error': error_message, 
+                'error': error_message,
                 'timestamp': time.time(),
-                'provider': 'llamacpp_local',
-                'model': self._model_name
+                'provider': self._current_provider.value
             },
             success=False,
             message=error_message
         )
     
     def is_available(self) -> bool:
-        """
-        Check if the AI processor is available and llama.cpp server is responding.
-        
-        Returns:
-            bool: True if llama.cpp is available, False otherwise
-        """
-        #----------------------------------------------------------------
-        # REFRESH STATUS DISPONIBILITÀ
-        #----------------------------------------------------------------
-        # Refresh availability status with a quick test
-        self._is_available = self._test_connection()
-        return self._is_available
+        """Check if any AI provider is available."""
+        return self._local_available or self._gemini_available
     
-    def get_model_info(self) -> Dict[str, Any]:
-        """
-        Get information about the current model and llama.cpp setup.
-        
-        Returns:
-            Dict[str, Any]: Model and configuration information
-        """
-        #----------------------------------------------------------------
-        # INFORMAZIONI CONFIGURAZIONE MODELLO
-        #----------------------------------------------------------------
+    def get_provider_status(self) -> Dict[str, Any]:
+        """Get detailed status of both providers."""
         return {
-            'model_name': self._model_name,
-            'llamacpp_url': self._llamacpp_url,
-            'provider': 'llamacpp_local',
-            'timeout': self._timeout,
-            'max_retries': self._max_retries,
-            'available': self.is_available()
+            'current_provider': self._current_provider.value,
+            'local': {
+                'available': self._local_available,
+                'model': self._local_config['model'],
+                'url': self._local_config['url']
+            },
+            'gemini': {
+                'available': self._gemini_available,
+                'model': self._gemini_config['model'],
+                'api_key_configured': bool(self._gemini_config['api_key'])
+            },
+            'overall_available': self.is_available()
         }
-    
-    def change_model(self, new_model_name: str) -> bool:
-        """
-        Change the active model for AI processing.
-        
-        Args:
-            new_model_name (str): Name of the new model to use
-            
-        Returns:
-            bool: True if model change was successful, False otherwise
-        """
-        try:
-            #----------------------------------------------------------------
-            # CAMBIO MODELLO CON VERIFICA
-            #----------------------------------------------------------------
-            old_model = self._model_name
-            self._model_name = new_model_name
-            
-            # Test the new model with a simple request
-            test_available = self.is_available()
-            
-            if test_available:
-                logging.info(f'[AIProcessor] Successfully changed model from {old_model} to {new_model_name}')
-                return True
-            else:
-                # Revert to old model if test failed
-                self._model_name = old_model
-                logging.warning(f'[AIProcessor] Failed to change to model {new_model_name}, reverted to {old_model}')
-                return False
-                
-        except Exception as e:
-            logging.error(f'[AIProcessor] Error changing model: {e}')
-            return False
-    
-    #----------------------------------------------------------------
-    # STREAMING FUNCTIONALITY
-    #----------------------------------------------------------------
-    
-    def stream_request(self, user_input: str, context: Optional[Dict[str, Any]] = None):
-        """
-        Process a user request using llama.cpp streaming API.
-        
-        This method yields chunks of text as they are received from llama.cpp,
-        enabling real-time streaming responses to reduce perceived latency.
-        
-        Args:
-            user_input (str): The user's input text
-            context (Optional[Dict[str, Any]]): Additional context for the request
-            
-        Yields:
-            str: Chunks of text as they are received from llama.cpp
-            
-        Raises:
-            Exception: If streaming fails or input is invalid
-        """
-        #----------------------------------------------------------------
-        # VALIDAZIONE INPUT UTENTE PER STREAMING
-        #----------------------------------------------------------------
-        if not user_input or not isinstance(user_input, str):
-            logging.warning('[AIProcessor] Invalid input for streaming request')
-            yield "Mi dispiace, non ho ricevuto una richiesta valida."
-            return
-        
-        user_input = user_input.strip()
-        if not user_input:
-            logging.warning('[AIProcessor] Empty input for streaming request')
-            yield "Mi dispiace, la tua richiesta sembra essere vuota."
-            return
-        
-        #----------------------------------------------------------------
-        # VERIFICA DISPONIBILITÀ LLAMA.CPP PER STREAMING
-        #----------------------------------------------------------------
-        if not self._is_available:
-            logging.error('[AIProcessor] llama.cpp server not available for streaming')
-            yield "Mi dispiace, il sistema AI locale non è disponibile al momento."
-            return
-        
-        logging.info(f'[AIProcessor] Starting streaming request: "{user_input[:100]}..."')
-        
-        try:
-            # Prepare the prompt for streaming
-            formatted_prompt = self._prepare_prompt(user_input, context)
-            
-            # Stream response from llama.cpp
-            for chunk in self._make_llamacpp_stream_request(formatted_prompt):
-                if chunk:
-                    # Clean chunk content in real-time
-                    cleaned_chunk = self._clean_streaming_chunk(chunk)
-                    if cleaned_chunk:
-                        yield cleaned_chunk
-                        
-        except Exception as e:
-            logging.error(f'[AIProcessor] Error in streaming request: {e}')
-            yield f"Mi dispiace, si è verificato un errore durante la generazione della risposta: {str(e)}"
-    
-    def _make_llamacpp_stream_request(self, prompt: str):
-        """
-        Make a streaming request to llama.cpp completion API.
-        
-        This method handles the HTTP streaming connection and parses
-        the server-sent events format used by llama.cpp.
-        
-        Args:
-            prompt (str): The formatted prompt for completion
-            
-        Yields:
-            str: Content chunks as they are received
-            
-        Raises:
-            Exception: If the streaming request fails
-        """
-        #----------------------------------------------------------------
-        # CONFIGURAZIONE PAYLOAD PER STREAMING
-        #----------------------------------------------------------------
-        payload = {
-            "prompt": prompt,
-            "n_predict": 192,  # Stesso valore del non-streaming
-            "temperature": 0.7,
-            "top_p": 0.8,
-            "top_k": 40,
-            "repeat_penalty": 1.15,
-            "repeat_last_n": 128,
-            "stop": ["\nUtente:", "\n\nUtente:", "Utente:", "\n\n"],
-            "stream": True,  # Abilita streaming
-            "cache_prompt": True
-        }
-        
-        try:
-            logging.debug(f'[AIProcessor] Starting streaming request to llama.cpp: {self._llamacpp_url}')
-            
-            #----------------------------------------------------------------
-            # INVIO RICHIESTA HTTP STREAMING
-            #----------------------------------------------------------------
-            start_time = time.time()
-            first_chunk_time = None
-            
-            response = self._session.post(
-                self._llamacpp_url,
-                json=payload,
-                timeout=self._timeout,
-                stream=True  # Abilita streaming HTTP
-            )
-            
-            response.raise_for_status()
-            
-            #----------------------------------------------------------------
-            # PARSING EVENTI STREAMING IN TEMPO REALE
-            #----------------------------------------------------------------
-            buffer = ""
-            chunk_count = 0
-            
-            for raw_chunk in response.iter_lines(decode_unicode=True):
-                if raw_chunk:
-                    # Gestione eventi server-sent events di llama.cpp
-                    if raw_chunk.startswith('data: '):
-                        data_chunk = raw_chunk[6:]  # Rimuovi prefisso "data: "
-                        
-                        # Segnala primo chunk per metriche TTFB
-                        if first_chunk_time is None:
-                            first_chunk_time = time.time()
-                            ttfb = first_chunk_time - start_time
-                            logging.debug(f'[AIProcessor] TTFB (Time To First Byte): {ttfb:.3f}s')
-                        
-                        if data_chunk.strip() == '[DONE]':
-                            # Fine dello streaming
-                            break
-                        
-                        try:
-                            # Parse JSON del chunk
-                            chunk_data = json.loads(data_chunk)
-                            
-                            # Estrai contenuto dal chunk
-                            if 'content' in chunk_data:
-                                content = chunk_data['content']
-                                if content:
-                                    chunk_count += 1
-                                    yield content
-                                    
-                        except json.JSONDecodeError:
-                            # Skip chunk malformati
-                            continue
-            
-            # Log statistiche finali
-            total_time = time.time() - start_time
-            logging.debug(f'[AIProcessor] Streaming completed: {chunk_count} chunks in {total_time:.2f}s')
-            
-        except requests.exceptions.Timeout:
-            logging.error(f'[AIProcessor] Streaming timeout after {self._timeout} seconds')
-            raise
-        except requests.exceptions.ConnectionError:
-            logging.error('[AIProcessor] Streaming connection error - is llama.cpp running?')
-            raise
-        except requests.exceptions.HTTPError as e:
-            logging.error(f'[AIProcessor] Streaming HTTP error: {e}')
-            raise
-        except Exception as e:
-            logging.error(f'[AIProcessor] Unexpected error in streaming request: {e}')
-            raise
-    
-    def _clean_streaming_chunk(self, chunk: str) -> str:
-        """
-        Clean streaming chunk content in real-time.
-        
-        This method applies lightweight cleaning to streaming chunks
-        without affecting the streaming performance.
-        
-        Args:
-            chunk (str): Raw chunk content from llama.cpp
-            
-        Returns:
-            str: Cleaned chunk content
-        """
-        if not chunk:
-            return chunk
-        
-        # Rimuovi prefissi comuni solo se il chunk inizia con essi
-        prefixes_to_remove = ["Frank:", "Assistente:", "AI:"]
-        for prefix in prefixes_to_remove:
-            if chunk.startswith(prefix):
-                chunk = chunk[len(prefix):].strip()
-                break
-        
-        return chunk
-    
-    #----------------------------------------------------------------
-    # WARMUP FUNCTIONALITY
-    #----------------------------------------------------------------
     
     def warmup(self) -> bool:
-        """
-        Warm up the llama.cpp model with a minimal request.
-        
-        This method sends a brief request to initialize the model and cache,
-        reducing latency for subsequent requests. Designed to be non-blocking
-        and safe to call during application startup.
-        
-        Returns:
-            bool: True if warmup was successful, False otherwise
-        """
+        """Warm up the current AI provider."""
         try:
-            logging.info('[AIProcessor] Starting model warmup...')
-            warmup_start = time.time()
-            
-            #----------------------------------------------------------------
-            # WARMUP REQUEST OTTIMIZZATO
-            #----------------------------------------------------------------
+            if self._current_provider == AIProvider.LOCAL and self._local_available:
+                return self._warmup_local()
+            elif self._current_provider == AIProvider.GEMINI and self._gemini_available:
+                return self._warmup_gemini()
+            else:
+                logging.warning('[AIProcessor] No provider available for warmup')
+                return False
+        except Exception as e:
+            logging.error(f'[AIProcessor] Warmup error: {e}')
+            return False
+    
+    def _warmup_local(self) -> bool:
+        """Warm up local llama.cpp."""
+        try:
+            logging.info('[AIProcessor] Starting local AI warmup...')
             warmup_payload = {
                 "prompt": "Hi",
-                "n_predict": 5,  # Minimo predizioni per warmup veloce
+                "n_predict": 5,
                 "temperature": 0.1,
                 "cache_prompt": True,
                 "stop": ["\n"]
             }
             
             response = self._session.post(
-                self._llamacpp_url,
+                self._local_config['url'],
                 json=warmup_payload,
-                timeout=15  # Timeout ridotto per warmup
+                timeout=15
             )
             
-            warmup_time = time.time() - warmup_start
-            
             if response.status_code == 200:
-                logging.info(f'[AIProcessor] Model warmup completed successfully in {warmup_time:.2f}s')
+                logging.info('[AIProcessor] Local AI warmup completed')
                 return True
             else:
-                logging.warning(f'[AIProcessor] Model warmup failed with status code: {response.status_code}')
+                logging.warning(f'[AIProcessor] Local AI warmup failed: {response.status_code}')
                 return False
                 
-        except requests.exceptions.Timeout:
-            logging.warning('[AIProcessor] Model warmup timeout - continuing anyway')
-            return False
-        except requests.exceptions.RequestException as e:
-            logging.warning(f'[AIProcessor] Model warmup failed: {e} - continuing anyway')
-            return False
         except Exception as e:
-            logging.error(f'[AIProcessor] Unexpected error during warmup: {e}')
+            logging.warning(f'[AIProcessor] Local AI warmup error: {e}')
+            return False
+    
+    def _warmup_gemini(self) -> bool:
+        """Warm up Gemini API connection."""
+        try:
+            logging.info('[AIProcessor] Starting Gemini API warmup...')
+            # Gemini doesn't need warmup like local models, just test connection
+            return self._test_gemini_connection()
+        except Exception as e:
+            logging.warning(f'[AIProcessor] Gemini API warmup error: {e}')
             return False
     
     def shutdown(self) -> None:
-        """
-        Shutdown the AI processor and clean up resources.
-        """
+        """Shutdown the AI processor and clean up resources."""
         try:
-            #----------------------------------------------------------------
-            # SHUTDOWN E CLEANUP RISORSE
-            #----------------------------------------------------------------
-            logging.info('[AIProcessor] Shutting down llama.cpp AI processor')
+            logging.info('[AIProcessor] Shutting down dual AI processor')
             self._session.close()
-            self._is_available = False
+            self._local_available = False
+            self._gemini_available = False
         except Exception as e:
-            logging.error(f'[AIProcessor] Error during shutdown: {e}')
+            logging.error(f'[AIProcessor] Shutdown error: {e}')

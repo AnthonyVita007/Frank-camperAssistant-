@@ -20,6 +20,12 @@ VARIABILI, FONT E RESET BASE
 
   --console-font: 'VT323', Consolas, Menlo, Monaco, "Courier New", monospace;
   --base-font-size: 20px;
+
+  /* Dimensioni switch AI */
+  --ai-track-w: clamp(80px, 14vw, 140px);
+  --ai-track-h: clamp(26px, 4.5vw, 40px);
+  --ai-knob-gap: 3px;
+  --ai-knob-w: calc(var(--ai-track-h) - (var(--ai-knob-gap) * 2));
 }
 
 /*----------------------------------------------------------------
@@ -57,6 +63,16 @@ HEADER FISSO
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+/*----------------------------------------------------------------
+HEADER BAR: brand centrato, switch posizionato a destra
+----------------------------------------------------------------*/
+.header-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center; /* mantiene l'h1 centrato */
+}
+
 .header-fixed h1 {
   margin: 0;
   text-align: center;
@@ -69,6 +85,72 @@ HEADER FISSO
   text-shadow:
     0 0 10px rgba(255, 0, 0, 0.6),
     0 0 22px rgba(255, 0, 0, 0.35);
+}
+
+/*----------------------------------------------------------------
+AI TOGGLE (interruttore giocattolo)
+----------------------------------------------------------------*/
+.ai-toggle {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-label {
+  font-size: clamp(12px, 1.8vw, 16px);
+  letter-spacing: 0.06em;
+  opacity: 0.9;
+  user-select: none;
+}
+
+/* Track rettangolare con glow leggero */
+.ai-switch {
+  position: relative;
+  width: var(--ai-track-w);
+  height: var(--ai-track-h);
+  background: linear-gradient(180deg, #0d0d0d 0%, #151515 100%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 0 10px rgba(255, 255, 255, 0.06),
+    0 0 12px rgba(255, 0, 0, 0.15);
+  padding: 0;
+  cursor: pointer;
+  outline: none;
+}
+
+/* Pulsante rosso scorrevole */
+.ai-switch-knob {
+  position: absolute;
+  top: var(--ai-knob-gap);
+  left: var(--ai-knob-gap);
+  width: var(--ai-knob-w);
+  height: calc(var(--ai-track-h) - (var(--ai-knob-gap) * 2));
+  background: radial-gradient(circle at 30% 30%, #ff4d4d 0%, #ff0000 40%, #b30000 100%);
+  border: 1px solid rgba(255, 0, 0, 0.6);
+  border-radius: 6px;
+  box-shadow:
+    0 0 12px rgba(255, 0, 0, 0.6),
+    inset 0 0 10px rgba(255, 255, 255, 0.12);
+  transition: left 160ms ease-out, box-shadow 160ms ease-out;
+}
+
+/* Stato ON (CLOUD): il knob scivola a destra e il glow aumenta */
+.ai-switch.on .ai-switch-knob {
+  left: calc(100% - var(--ai-knob-w) - var(--ai-knob-gap));
+  box-shadow:
+    0 0 16px rgba(255, 0, 0, 0.75),
+    inset 0 0 12px rgba(255, 255, 255, 0.16);
+}
+
+/* Accessibilità: focus visibile */
+.ai-switch:focus-visible {
+  outline: 2px dashed rgba(255, 0, 0, 0.6);
+  outline-offset: 2px;
 }
 
 /*----------------------------------------------------------------
@@ -397,6 +479,14 @@ RESPONSIVE
   .header-fixed,
   .footer-fixed {
     padding: 15px 20px;
+  }
+
+  .ai-toggle {
+    gap: 6px;
+  }
+  
+  .ai-label {
+    font-size: clamp(11px, 2.2vw, 14px);
   }
   
   .workspace-scrollable {

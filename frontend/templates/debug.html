@@ -1,3 +1,6 @@
+<!------------------------------------------------------------------
+HEADER + WORKSPACE + FOOTER - Modalità DEBUG con switch AI LOCAL↔CLOUD
+------------------------------------------------------------------>
 <!DOCTYPE html>
 <html lang="it">
 
@@ -10,17 +13,42 @@
 
 <body>
 
-    <!-- HEADER FISSO -->
+    <!------------------------------------------------------------------
+    HEADER FISSO con brand centrato e switch AI a destra
+    ------------------------------------------------------------------>
     <header class="header-fixed">
-        <h1>Frank/dev</h1>
+        <div class="header-bar">
+            <h1>Frank/dev</h1>
+
+            <!-- Switch AI stile "interruttore giocattolo" -->
+            <div class="ai-toggle" id="ai-toggle" aria-label="Selettore AI">
+                <span class="ai-label ai-label-left" aria-hidden="false">LOCAL</span>
+                <button
+                    id="ai-switch"
+                    class="ai-switch"
+                    type="button"
+                    role="switch"
+                    aria-pressed="false"
+                    aria-label="Attiva CLOUD (Gemini)"
+                    data-provider="local"
+                >
+                    <span class="ai-switch-knob" aria-hidden="true"></span>
+                </button>
+                <span class="ai-label ai-label-right" aria-hidden="false">CLOUD</span>
+            </div>
+        </div>
     </header>
 
-    <!-- WORKSPACE CENTRALE SCROLLABILE -->
+    <!------------------------------------------------------------------
+    WORKSPACE CENTRALE SCROLLABILE
+    ------------------------------------------------------------------>
     <main class="workspace-scrollable">
         <div id="log-container"></div>
     </main>
 
-    <!-- FOOTER FISSO -->
+    <!------------------------------------------------------------------
+    FOOTER FISSO
+    ------------------------------------------------------------------>
     <footer class="footer-fixed">
         <div class="input-area">
             <input type="text" id="command-input" placeholder="Scrivi un comando o fai una domanda...">
@@ -28,7 +56,9 @@
         </div>
     </footer>
 
-    <!-- Scripts -->
+    <!------------------------------------------------------------------
+    Scripts
+    ------------------------------------------------------------------>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <!-- Markdown rendering and security libraries -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>

@@ -71,6 +71,15 @@ class CommunicationHandler:
             # Cattura il SID del client per risposte indirizzate
             client_sid = getattr(request, 'sid', None)
             self._handle_frontend_command(json_data, client_sid)
+
+        #----------------------------------------------------------------
+        # REGISTRAZIONE: TOGGLE PROVIDER AI (LOCAL ↔ GEMINI)
+        #----------------------------------------------------------------
+        @self._socketio_instance.on('ui_ai_provider_toggle')
+        def handle_ui_ai_provider_toggle(json_data):
+            """Handle AI provider toggle from the UI."""
+            client_sid = getattr(request, 'sid', None)
+            self._handle_ai_provider_toggle(json_data, client_sid)
     
     #----------------------------------------------------------------
     # INSTRADAMENTO RICHIESTE DAL FRONTEND
@@ -119,6 +128,84 @@ class CommunicationHandler:
         except Exception as e:
             logging.error(f'[CommunicationHandler] Error handling frontend request: {e}')
             self._send_error_response('Errore interno del server', sid)
+    
+    #----------------------------------------------------------------
+    # GESTIONE: TOGGLE PROVIDER AI (LOCAL ↔ GEMINI)
+    #----------------------------------------------------------------
+    def _handle_ai_provider_toggle(self, json_data: Optional[Dict[str, Any]], sid: Optional[str] = None) -> None:
+        """
+        Handle the UI toggle to switch AI provider and reset the session.
+        
+        Expected payload:
+          { "provider": "local" | "gemini" }
+        """
+        try:
+            # Validazione payload
+            if not json_data or not isinstance(json_data, dict):
+                logging.warning('[CommunicationHandler] Invalid payload for ui_ai_provider_toggle')
+                self._send_error_response('Payload non valido per cambio provider', sid)
+                return
+            
+            provider_str = str(json_data.get('provider', '')).strip().lower()
+            if provider_str not in ('local', 'gemini'):
+                logging.warning(f'[CommunicationHandler] Unknown provider requested: "{provider_str}"')
+                self._send_error_response('Provider richiesto non valido (usa "local" o "gemini")', sid)
+                return
+            
+            # Verifica che l'AI handler supporti lo switch
+            if not hasattr(self._ai_handler, 'set_ai_provider'):
+                logging.warning('[CommunicationHandler] AIHandler does not support provider switching')
+                self._send_error_response('Cambio provider non supportato in questa configurazione', sid)
+                return
+            
+            # Prova a usare l'Enum se disponibile, altrimenti fallback a stringhe
+            success = False
+            try:
+                from ..ai.ai_processor import AIProvider  # Enum disponibile con dual-provider
+                target = AIProvider.GEMINI if provider_str == 'gemini' else AIProvider.LOCAL
+                success = self._ai_handler.set_ai_provider(target)  # type: ignore
+            except Exception:
+                # Fallback: passiamo la stringa (supportato dalla versione aggiornata dell’AIHandler)
+                success = self._ai_handler.set_ai_provider(provider_str)  # type: ignore
+            
+            if not success:
+                logging.warning('[CommunicationHandler] AI provider switch failed')
+                self._send_error_response('Impossibile cambiare provider AI (verifica disponibilità)', sid)
+                return
+            
+            #----------------------------------------------------------------
+            # RESET: CLEAR LOG + MESSAGGIO DI STATO
+            #----------------------------------------------------------------
+            # Clear log sul client corrente
+            self._socketio_instance.emit('backend_action', {
+                'action': 'clear_log',
+                'data': 'Console pulita dopo cambio provider.'
+            }, to=sid)
+            
+            # Messaggio di conferma
+            human_label = 'LOCAL (llama.cpp)' if provider_str == 'local' else 'CLOUD (Gemini)'
+            self._socketio_instance.emit('backend_response', {
+                'data': f'Provider AI impostato: {human_label}',
+                'type': 'system'
+            }, to=sid)
+            
+            logging.info(f'[CommunicationHandler] AI provider switched to: {provider_str}')
+            
+            #----------------------------------------------------------------
+            # WARMUP NON BLOCCANTE DEL NUOVO PROVIDER
+            #----------------------------------------------------------------
+            def _do_warmup():
+                try:
+                    if hasattr(self._ai_handler, '_ai_processor') and self._ai_handler._ai_processor:
+                        self._ai_handler._ai_processor.warmup()
+                except Exception as warm_err:
+                    logging.debug(f'[CommunicationHandler] Warmup after switch failed (non-critical): {warm_err}')
+            
+            self._socketio_instance.start_background_task(_do_warmup)
+        
+        except Exception as e:
+            logging.error(f'[CommunicationHandler] Error handling AI provider toggle: {e}')
+            self._send_error_response('Errore durante il cambio provider', sid)
     
     #----------------------------------------------------------------
     # UTILITÀ: ESTRARRE COMANDO
@@ -423,5 +510,6 @@ class CommunicationHandler:
         return {
             'frontend_command': 'Comando inviato dal frontend',
             'backend_response': 'Risposta generale dal backend',
-            'backend_action': 'Azione specifica dal backend (navigazione, clear, etc.)'
+            'backend_action': 'Azione specifica dal backend (navigazione, clear, etc.)',
+            'ui_ai_provider_toggle': 'Toggle provider AI dalla UI (local ↔ gemini)'
         }

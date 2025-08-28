@@ -6,7 +6,7 @@ managing AI request validation, processing coordination, and logging.
 """
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 
 from .ai_processor import AIProcessor
 from .ai_response import AIResponse
@@ -24,20 +24,40 @@ class AIHandler:
         _is_enabled (bool): Whether AI processing is enabled
     """
     
-    def __init__(self, ai_processor: Optional[AIProcessor] = None) -> None:
+    def __init__(self, ai_processor: Optional[AIProcessor] = None, 
+                 progress_callback: Optional[Callable[[str, float], None]] = None) -> None:
         """
-        Initialize the AIHandler.
+        Initialize the AIHandler with optimizations support.
         
         Args:
             ai_processor (Optional[AIProcessor]): Custom AI processor instance.
-                                                  If None, creates a default one.
+                                                  If None, creates a default optimized one.
+            progress_callback (Optional[Callable]): Callback for progress updates
         """
         try:
-            self._ai_processor = ai_processor or AIProcessor()
+            if ai_processor:
+                self._ai_processor = ai_processor
+            else:
+                # Create optimized AI processor with enhanced defaults
+                self._ai_processor = AIProcessor(
+                    enable_cache=True,
+                    enable_warmup=True,
+                    cache_size=100,
+                    timeout=25.0,  # Reduced timeout for faster responses
+                    progress_callback=progress_callback
+                )
+            
             self._is_enabled = self._ai_processor.is_available()
             
             if self._is_enabled:
-                logging.info('[AIHandler] AI handler initialized successfully')
+                logging.info('[AIHandler] Optimized AI handler initialized successfully')
+                
+                # Try preloading common responses for better performance
+                try:
+                    preload_stats = self._ai_processor.preload_common_responses()
+                    logging.info(f'[AIHandler] Preloaded {preload_stats["preloaded"]} common responses')
+                except Exception as e:
+                    logging.warning(f'[AIHandler] Preload failed: {e}')
             else:
                 logging.warning('[AIHandler] AI handler initialized but AI processor is not available')
                 
@@ -140,48 +160,143 @@ class AIHandler:
     
     def get_ai_status(self) -> Dict[str, Any]:
         """
-        Get the current status of the AI system.
+        Get the current status of the AI system with enhanced performance metrics.
         
         Returns:
-            Dict[str, Any]: Status information about the AI system
+            Dict[str, Any]: Enhanced status information about the AI system
         """
         status = {
             'enabled': self._is_enabled,
             'processor_available': self._ai_processor is not None,
-            'processor_status': 'unknown'
+            'processor_status': 'unknown',
+            'optimizations': {
+                'caching_enabled': False,
+                'warmup_enabled': False,
+                'progress_callback_enabled': False
+            },
+            'performance_metrics': None
         }
         
         if self._ai_processor:
             try:
                 status['processor_status'] = 'available' if self._ai_processor.is_available() else 'unavailable'
+                
+                # Get enhanced model info with optimizations
+                model_info = self._ai_processor.get_model_info()
+                status['model_info'] = model_info
+                
+                # Get performance metrics
+                performance = self._ai_processor.get_performance_metrics()
+                status['performance_metrics'] = performance
+                
+                # Update optimization status
+                status['optimizations'] = model_info.get('optimizations', {})
+                
             except Exception as e:
                 status['processor_status'] = f'error: {str(e)}'
         
         return status
     
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """
+        Get detailed performance metrics from the AI processor.
+        
+        Returns:
+            Dict[str, Any]: Performance metrics or error information
+        """
+        if not self._ai_processor:
+            return {'error': 'AI processor not available'}
+        
+        try:
+            return self._ai_processor.get_performance_metrics()
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def clear_cache(self) -> Dict[str, Any]:
+        """
+        Clear the AI processor cache.
+        
+        Returns:
+            Dict[str, Any]: Cache clearing statistics or error information
+        """
+        if not self._ai_processor:
+            return {'error': 'AI processor not available'}
+        
+        try:
+            return self._ai_processor.clear_cache()
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def set_progress_callback(self, callback: Optional[Callable[[str, float], None]]) -> bool:
+        """
+        Set progress callback for the AI processor.
+        
+        Args:
+            callback (Optional[Callable]): Progress callback function
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self._ai_processor:
+            return False
+        
+        try:
+            self._ai_processor.set_progress_callback(callback)
+            return True
+        except Exception as e:
+            logging.error(f'[AIHandler] Failed to set progress callback: {e}')
+            return False
+    
     def shutdown(self) -> None:
         """
-        Shutdown the AI handler and clean up resources.
+        Shutdown the AI handler and clean up resources with performance summary.
         """
-        logging.info('[AIHandler] Shutting down AI handler')
+        logging.info('[AIHandler] Shutting down optimized AI handler')
+        
+        # Log performance summary if available
+        if self._ai_processor:
+            try:
+                metrics = self._ai_processor.get_performance_metrics()
+                logging.info(f'[AIHandler] Performance summary - Total requests: {metrics["total_requests"]}, '
+                            f'Cache hit rate: {metrics["cache_hit_rate_percentage"]:.1f}%')
+                
+                # Properly shutdown the processor
+                self._ai_processor.shutdown()
+            except Exception as e:
+                logging.warning(f'[AIHandler] Error during processor shutdown: {e}')
+        
         self._is_enabled = False
-        # Note: AIProcessor doesn't need explicit cleanup in this implementation
-        # but this method is here for future extensibility
     
     def restart_ai_processor(self) -> bool:
         """
-        Restart the AI processor.
+        Restart the AI processor with optimizations.
         
         Returns:
             bool: True if restart was successful, False otherwise
         """
         try:
-            logging.info('[AIHandler] Restarting AI processor')
-            self._ai_processor = AIProcessor()
+            logging.info('[AIHandler] Restarting optimized AI processor')
+            
+            # Create new optimized processor
+            self._ai_processor = AIProcessor(
+                enable_cache=True,
+                enable_warmup=True,
+                cache_size=100,
+                timeout=25.0
+            )
+            
             self._is_enabled = self._ai_processor.is_available()
             
             if self._is_enabled:
-                logging.info('[AIHandler] AI processor restarted successfully')
+                logging.info('[AIHandler] Optimized AI processor restarted successfully')
+                
+                # Try preloading common responses
+                try:
+                    preload_stats = self._ai_processor.preload_common_responses()
+                    logging.info(f'[AIHandler] Preloaded {preload_stats["preloaded"]} responses after restart')
+                except Exception as e:
+                    logging.warning(f'[AIHandler] Preload after restart failed: {e}')
+                
                 return True
             else:
                 logging.warning('[AIHandler] AI processor restarted but not available')

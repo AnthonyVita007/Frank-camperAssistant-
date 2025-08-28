@@ -37,7 +37,7 @@ class AIHandler:
     #----------------------------------------------------------------
     # INIZIALIZZAZIONE AI HANDLER CON SUPPORTO MCP
     #----------------------------------------------------------------
-    def __init__(self, ai_processor: Optional[AIProcessor] = None, mcp_handler: Optional = None, llm_intent_enabled: bool = True) -> None: # type: ignore
+    def __init__(self, ai_processor: Optional[AIProcessor] = None, mcp_handler: Optional = None, llm_intent_enabled: bool = True, llm_intent_detector: Optional[LLMIntentDetector] = None) -> None: # type: ignore
         """
         Initialize the AIHandler with optional MCP support and LLM intent detection.
         
@@ -47,6 +47,8 @@ class AIHandler:
             mcp_handler (Optional): MCP handler for tool interactions.
                                    If None, tool features will be disabled.
             llm_intent_enabled (bool): Whether to enable LLM-based intent detection.
+            llm_intent_detector (Optional[LLMIntentDetector]): Pre-configured LLM intent detector.
+                                                              If provided, llm_intent_enabled is ignored.
         """
         try:
             self._ai_processor = ai_processor or AIProcessor()
@@ -57,24 +59,31 @@ class AIHandler:
             self._tool_detection_enabled = mcp_handler is not None
             
             # LLM Intent Detection Integration
-            self._llm_intent_enabled = llm_intent_enabled and self._is_enabled
-            self._llm_intent_detector = None
-            
-            if self._llm_intent_enabled:
-                try:
-                    self._llm_intent_detector = LLMIntentDetector(
-                        ai_processor=self._ai_processor,
-                        enabled=True
-                    )
-                    if self._llm_intent_detector.is_enabled():
-                        logging.info('[AIHandler] LLM intent detection initialized successfully')
-                    else:
-                        logging.warning('[AIHandler] LLM intent detection initialized but not available')
+            if llm_intent_detector is not None:
+                # Use pre-configured detector
+                self._llm_intent_detector = llm_intent_detector
+                self._llm_intent_enabled = llm_intent_detector.is_enabled()
+                logging.info('[AIHandler] Using pre-configured LLM intent detector')
+            else:
+                # Create new detector if requested
+                self._llm_intent_enabled = llm_intent_enabled and self._is_enabled
+                self._llm_intent_detector = None
+                
+                if self._llm_intent_enabled:
+                    try:
+                        self._llm_intent_detector = LLMIntentDetector(
+                            ai_processor=self._ai_processor,
+                            enabled=True
+                        )
+                        if self._llm_intent_detector.is_enabled():
+                            logging.info('[AIHandler] LLM intent detection initialized successfully')
+                        else:
+                            logging.warning('[AIHandler] LLM intent detection initialized but not available')
+                            self._llm_intent_enabled = False
+                    except Exception as e:
+                        logging.error(f'[AIHandler] Failed to initialize LLM intent detection: {e}')
                         self._llm_intent_enabled = False
-                except Exception as e:
-                    logging.error(f'[AIHandler] Failed to initialize LLM intent detection: {e}')
-                    self._llm_intent_enabled = False
-                    self._llm_intent_detector = None
+                        self._llm_intent_detector = None
             
             if self._is_enabled:
                 logging.info('[AIHandler] AI handler initialized successfully')
@@ -97,8 +106,44 @@ class AIHandler:
             self._tool_detection_enabled = False
             self._llm_intent_enabled = False
             self._llm_intent_detector = None
-            self._mcp_handler = None
-            self._tool_detection_enabled = False
+    
+    @classmethod
+    def from_config(cls, config_path: Optional[str] = None, ai_processor: Optional[AIProcessor] = None, mcp_handler: Optional = None):
+        """
+        Create an AIHandler instance using configuration from config file.
+        
+        Args:
+            config_path (Optional[str]): Path to configuration file
+            ai_processor (Optional[AIProcessor]): Custom AI processor instance
+            mcp_handler (Optional): MCP handler for tool interactions
+            
+        Returns:
+            AIHandler: Configured AI handler instance
+        """
+        try:
+            from .llm_intent_config import create_llm_intent_detector_from_config
+            
+            # Create LLM intent detector from config
+            llm_intent_detector = create_llm_intent_detector_from_config(
+                ai_processor=ai_processor,
+                config_path=config_path
+            )
+            
+            # Create AI handler with configured detector
+            return cls(
+                ai_processor=ai_processor,
+                mcp_handler=mcp_handler,
+                llm_intent_detector=llm_intent_detector
+            )
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error creating AI handler from config: {e}')
+            # Fallback to default initialization
+            return cls(
+                ai_processor=ai_processor,
+                mcp_handler=mcp_handler,
+                llm_intent_enabled=False
+            )
     
     #----------------------------------------------------------------
     # GESTIONE RICHIESTE AI CON SUPPORTO MCP

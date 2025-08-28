@@ -61,7 +61,7 @@ class ConnectionManager:
         
         # Send welcome message to the newly connected client
         emit('backend_response', {
-            'data': 'Benvenuto! Frank Camper Assistant è attivo e pronto.',
+            'data': 'Benvenuto! sono pronto ad aiutarti.',
             'type': 'system'
         })
     

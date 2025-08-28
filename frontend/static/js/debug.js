@@ -192,6 +192,39 @@ socket.on('connect_error', (err) => {
     appendLog(`Errore di connessione: ${err.message || err}`, 'system');
 });
 
+// Tool notification handlers for debug mode
+socket.on('backend_tool_notification', (payload) => {
+    const { tool_name, status, timestamp } = payload;
+    let message = '';
+    let icon = '';
+    
+    switch (status) {
+        case 'selected':
+            icon = '🔧';
+            message = `Tool selezionato: ${tool_name}`;
+            break;
+        case 'starting':
+            icon = '▶️';
+            message = `Avvio tool: ${tool_name}`;
+            break;
+        case 'closing':
+            icon = '⏹️';
+            message = `Chiusura tool: ${tool_name}`;
+            break;
+        default:
+            icon = '🔧';
+            message = `${tool_name} → ${status}`;
+    }
+    
+    appendLog(`${icon} ${message}`, 'system');
+});
+
+socket.on('backend_parameter_request', (payload) => {
+    const { tool_name, missing_params, clarification_question } = payload;
+    appendLog(`❓ Richiesta parametri per ${tool_name}: ${clarification_question}`, 'system');
+    appendLog(`📝 Parametri mancanti: ${missing_params.join(', ')}`, 'system');
+});
+
 //----------------------------------------------------------------
 // Interazione utente base (invio comandi)
 //----------------------------------------------------------------

@@ -284,3 +284,127 @@ RESPONSIVE
     padding: 15px;
   }
 }
+
+/*----------------------------------------------------------------
+NOTIFICHE STRUMENTI - BUBBLES BLU
+----------------------------------------------------------------*/
+.tool-notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: rgba(0, 150, 255, 0.9);
+  color: #ffffff;
+  border: 2px solid #0096ff;
+  border-radius: 8px;
+  padding: 12px 20px;
+  font-family: var(--console-font);
+  font-size: 16px;
+  font-weight: bold;
+  text-shadow: 0 0 4px rgba(0, 150, 255, 0.8);
+  box-shadow: 
+    0 0 10px rgba(0, 150, 255, 0.5),
+    inset 0 0 10px rgba(0, 150, 255, 0.2);
+  z-index: 1000;
+  min-width: 200px;
+  text-align: center;
+  animation: tool-notification-enter 0.3s ease-out;
+}
+
+.tool-notification.closing {
+  animation: tool-notification-exit 0.3s ease-in forwards;
+}
+
+.tool-notification.selected {
+  background: rgba(0, 150, 255, 0.9);
+  border-color: #0096ff;
+}
+
+.tool-notification.starting {
+  background: rgba(0, 200, 100, 0.9);
+  border-color: #00c864;
+  text-shadow: 0 0 4px rgba(0, 200, 100, 0.8);
+  box-shadow: 
+    0 0 10px rgba(0, 200, 100, 0.5),
+    inset 0 0 10px rgba(0, 200, 100, 0.2);
+}
+
+.tool-notification.cancelling {
+  background: rgba(255, 100, 0, 0.9);
+  border-color: #ff6400;
+  text-shadow: 0 0 4px rgba(255, 100, 0, 0.8);
+  box-shadow: 
+    0 0 10px rgba(255, 100, 0, 0.5),
+    inset 0 0 10px rgba(255, 100, 0, 0.2);
+}
+
+@keyframes tool-notification-enter {
+  0% {
+    opacity: 0;
+    transform: translateX(100%) scale(0.8);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes tool-notification-exit {
+  0% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(100%) scale(0.8);
+  }
+}
+
+/* Pulsante cancellazione nella notifica */
+.tool-notification .cancel-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+  padding: 4px 8px;
+  margin-left: 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tool-notification .cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* Animazione pulsante scanner per strumenti attivi */
+.tool-active-indicator {
+  position: fixed;
+  top: 50%;
+  left: 20px;
+  width: 6px;
+  height: 40px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    #0096ff,
+    transparent
+  );
+  animation: tool-scanner 2s linear infinite;
+  border-radius: 3px;
+  box-shadow: 0 0 8px #0096ff;
+}
+
+@keyframes tool-scanner {
+  0% {
+    transform: translateY(-20px);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+}

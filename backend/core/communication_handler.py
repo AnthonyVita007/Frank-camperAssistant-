@@ -11,7 +11,7 @@ handling message reception, processing, and response transmission.
 import logging
 import uuid
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from flask import request
 from flask_socketio import SocketIO
 
@@ -242,6 +242,59 @@ class CommunicationHandler:
         except Exception as e:
             logging.error(f'[CommunicationHandler] Error handling AI provider toggle: {e}')
             self._send_error_response('Errore durante il cambio provider', sid)
+    
+    #----------------------------------------------------------------
+    # SISTEMA NOTIFICHE STRUMENTI
+    #----------------------------------------------------------------
+    def send_tool_notification(self, tool_name: str, status: str, sid: Optional[str] = None) -> None:
+        """
+        Send tool status notification to frontend.
+        
+        Args:
+            tool_name (str): Name of the tool
+            status (str): Tool status - "selected", "starting", "closing"
+            sid (Optional[str]): Client session ID for targeted notification
+        """
+        try:
+            notification_data = {
+                'tool_name': tool_name,
+                'status': status,
+                'timestamp': time.time()
+            }
+            
+            # Emit tool notification event
+            self._socketio_instance.emit('backend_tool_notification', notification_data, to=sid)
+            
+            logging.debug(f'[CommunicationHandler] Tool notification sent: {tool_name} -> {status}')
+            
+        except Exception as e:
+            logging.error(f'[CommunicationHandler] Error sending tool notification: {e}')
+    
+    def send_parameter_collection_request(self, tool_name: str, missing_params: List[str], clarification_question: str, sid: Optional[str] = None) -> None:
+        """
+        Send parameter collection request to frontend.
+        
+        Args:
+            tool_name (str): Name of the tool needing parameters
+            missing_params (List[str]): List of missing parameter names
+            clarification_question (str): Question to ask the user
+            sid (Optional[str]): Client session ID for targeted notification
+        """
+        try:
+            request_data = {
+                'tool_name': tool_name,
+                'missing_params': missing_params,
+                'clarification_question': clarification_question,
+                'timestamp': time.time()
+            }
+            
+            # Emit parameter collection request
+            self._socketio_instance.emit('backend_parameter_request', request_data, to=sid)
+            
+            logging.debug(f'[CommunicationHandler] Parameter collection request sent for {tool_name}')
+            
+        except Exception as e:
+            logging.error(f'[CommunicationHandler] Error sending parameter collection request: {e}')
     
     #----------------------------------------------------------------
     # UTILITÀ: ESTRARRE COMANDO
@@ -547,5 +600,7 @@ class CommunicationHandler:
             'frontend_command': 'Comando inviato dal frontend',
             'backend_response': 'Risposta generale dal backend',
             'backend_action': 'Azione specifica dal backend (navigazione, clear, etc.)',
-            'ui_ai_provider_toggle': 'Toggle provider AI dalla UI (local ↔ gemini)'
+            'ui_ai_provider_toggle': 'Toggle provider AI dalla UI (local ↔ gemini)',
+            'backend_tool_notification': 'Notifiche stato strumenti (selected, starting, closing)',
+            'backend_parameter_request': 'Richieste raccolta parametri per strumenti'
         }

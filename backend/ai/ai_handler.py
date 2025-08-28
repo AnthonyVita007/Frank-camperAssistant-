@@ -10,6 +10,7 @@ managing AI request validation, processing coordination, and logging.
 #----------------------------------------------------------------
 import logging
 from typing import Optional, Dict, Any, List, Union
+from dataclasses import dataclass
 
 from .ai_processor import AIProcessor  # Il processor (può essere single-provider o dual-provider)
 from .ai_response import AIResponse
@@ -20,6 +21,36 @@ try:
     from .ai_processor import AIProvider  # type: ignore
 except Exception:
     AIProvider = None  # type: ignore
+
+
+#----------------------------------------------------------------
+# GESTIONE STATO RACCOLTA PARAMETRI
+#----------------------------------------------------------------
+
+@dataclass
+class ParameterCollectionState:
+    """
+    State management for iterative parameter collection.
+    
+    This class tracks the state during parameter collection for tool execution,
+    supporting clarification questions, cancellation detection, and validation.
+    
+    Attributes:
+        tool_name (str): Name of the tool being configured
+        tool_schema (Dict[str, Any]): JSON schema for tool parameters
+        collected_params (Dict[str, Any]): Parameters collected so far
+        missing_params (List[str]): Parameters still needed
+        is_cancelled (bool): Whether collection was cancelled by user
+        clarification_count (int): Number of clarification rounds performed
+        max_clarifications (int): Maximum allowed clarification rounds
+    """
+    tool_name: str
+    tool_schema: Dict[str, Any]
+    collected_params: Dict[str, Any]
+    missing_params: List[str]
+    is_cancelled: bool = False
+    clarification_count: int = 0
+    max_clarifications: int = 3
 
 
 class AIHandler:
@@ -371,15 +402,18 @@ class AIHandler:
         context: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        Detect if the user input requires tool usage using hybrid approach:
-        1) LLM-based detection (se abilitato)
-        2) Pattern matching come fallback/integrazione
+        Detect if the user input requires tool usage using hybrid approach.
+        
+        This method focuses ONLY on intent classification (conversational vs tool_required).
+        Parameter extraction is handled separately by _collect_tool_parameters().
+        
+        Returns simplified intent result: {"requires_tool": bool, "category": str, "tool_name": str}
         """
         try:
             if not self._mcp_handler:
                 return None
             
-            # LLM-based detection
+            # LLM-based detection for intent classification only
             if self._llm_intent_enabled and self._llm_intent_detector:
                 try:
                     available_tools = None
@@ -395,39 +429,55 @@ class AIHandler:
                     
                     logging.debug(f'[AIHandler] LLM intent detection: conf={llm_result.confidence:.2f}, requires_tool={llm_result.requires_tool}')
                     
-                    # Alta confidenza
+                    # High confidence - accept LLM decision
                     if llm_result.confidence >= getattr(self._llm_intent_detector, '_confidence_threshold_high', 0.8):
                         if llm_result.requires_tool and llm_result.primary_intent:
-                            result = self._convert_llm_result_to_legacy_format(llm_result)
+                            result = {
+                                'requires_tool': True,
+                                'category': llm_result.primary_intent,
+                                'tool_name': llm_result.primary_intent,
+                                'confidence': llm_result.confidence,
+                                'detection_method': 'llm_high_confidence'
+                            }
                             logging.info(f'[AIHandler] High confidence LLM detection: {llm_result.primary_intent}')
                             return result
                         return None
                     
-                    # Media confidenza → combina con pattern
+                    # Medium confidence - combine with pattern matching
                     if llm_result.confidence >= getattr(self._llm_intent_detector, '_confidence_threshold_low', 0.5):
                         pattern_result = self._detect_tool_intent_pattern_matching(user_input, context)
                         if (llm_result.requires_tool and pattern_result and 
                             llm_result.primary_intent == pattern_result.get('primary_category')):
-                            combined = self._convert_llm_result_to_legacy_format(llm_result)
-                            combined['confidence'] = min(1.0, llm_result.confidence * 1.2)
-                            combined['detection_method'] = 'llm_pattern_combined'
+                            result = {
+                                'requires_tool': True,
+                                'category': llm_result.primary_intent,
+                                'tool_name': llm_result.primary_intent,
+                                'confidence': min(1.0, llm_result.confidence * 1.2),
+                                'detection_method': 'llm_pattern_combined'
+                            }
                             logging.info(f'[AIHandler] Combined agreement: {llm_result.primary_intent}')
-                            return combined
+                            return result
                         elif llm_result.requires_tool and llm_result.primary_intent:
-                            res = self._convert_llm_result_to_legacy_format(llm_result)
-                            res['detection_method'] = 'llm_medium_confidence'
+                            result = {
+                                'requires_tool': True,
+                                'category': llm_result.primary_intent,
+                                'tool_name': llm_result.primary_intent,
+                                'confidence': llm_result.confidence,
+                                'detection_method': 'llm_medium_confidence'
+                            }
                             logging.info(f'[AIHandler] Medium confidence LLM detection (override)')
-                            return res
+                            return result
                         elif pattern_result:
                             pattern_result['detection_method'] = 'pattern_override'
                             logging.info('[AIHandler] Pattern matching override')
                             return pattern_result
                     
-                    # Bassa confidenza → pattern fallback
+                    # Low confidence - fall back to pattern matching
                 except Exception as e:
                     logging.error(f'[AIHandler] Error in LLM intent detection: {e}')
-                    # Continua su pattern fallback
+                    # Continue to pattern fallback
             
+            # Pattern matching fallback
             pattern_result = self._detect_tool_intent_pattern_matching(user_input, context)
             if pattern_result:
                 pattern_result['detection_method'] = 'pattern_matching_fallback'
@@ -437,6 +487,116 @@ class AIHandler:
         except Exception as e:
             logging.error(f'[AIHandler] Error in hybrid intent detection: {e}')
             return None
+    
+    def _collect_tool_parameters(
+        self,
+        user_input: str,
+        tool_name: str,
+        tool_schema: Dict[str, Any],
+        context: Optional[Dict[str, Any]] = None
+    ) -> Optional[ParameterCollectionState]:
+        """
+        Collect parameters for tool execution using LLM-only approach with iterative collection.
+        
+        This method uses only LLM for parameter extraction, supporting:
+        - Iterative parameter collection with clarification questions
+        - Cancellation intent detection at any stage
+        - Parameter validation before tool execution
+        
+        Args:
+            user_input (str): The user's input text
+            tool_name (str): Name of the tool to configure
+            tool_schema (Dict[str, Any]): Tool's parameter schema
+            context (Optional[Dict[str, Any]]): Additional context
+            
+        Returns:
+            Optional[ParameterCollectionState]: Collection state or None if cancelled/failed
+        """
+        try:
+            # Check for cancellation intents first
+            if self._is_cancellation_intent(user_input):
+                logging.info(f'[AIHandler] Cancellation detected during parameter collection for {tool_name}')
+                return ParameterCollectionState(
+                    tool_name=tool_name,
+                    tool_schema=tool_schema,
+                    collected_params={},
+                    missing_params=[],
+                    is_cancelled=True
+                )
+            
+            # Initialize collection state
+            required_params = tool_schema.get('required', [])
+            collection_state = ParameterCollectionState(
+                tool_name=tool_name,
+                tool_schema=tool_schema,
+                collected_params={},
+                missing_params=required_params.copy()
+            )
+            
+            # Use LLM for parameter extraction if available
+            if self._llm_intent_enabled and self._llm_intent_detector:
+                try:
+                    extracted_params = self._llm_intent_detector.extract_parameters(
+                        user_input=user_input,
+                        tool_name=tool_name,
+                        tool_schema=tool_schema,
+                        context=context
+                    )
+                    
+                    if extracted_params:
+                        # Validate and add parameters
+                        for param_name, param_value in extracted_params.items():
+                            if param_name in tool_schema.get('properties', {}):
+                                collection_state.collected_params[param_name] = param_value
+                                if param_name in collection_state.missing_params:
+                                    collection_state.missing_params.remove(param_name)
+                        
+                        logging.debug(f'[AIHandler] LLM extracted parameters for {tool_name}: {extracted_params}')
+                    
+                except Exception as e:
+                    logging.error(f'[AIHandler] Error in LLM parameter extraction: {e}')
+                    # Fall back to legacy regex-based extraction
+                    legacy_params = self._extract_tool_parameters_legacy(user_input, tool_name, {'parameters_schema': tool_schema}, context)
+                    if legacy_params:
+                        for param_name, param_value in legacy_params.items():
+                            if param_name in tool_schema.get('properties', {}) and param_name != 'context':
+                                collection_state.collected_params[param_name] = param_value
+                                if param_name in collection_state.missing_params:
+                                    collection_state.missing_params.remove(param_name)
+            else:
+                # Fallback to legacy regex-based extraction
+                legacy_params = self._extract_tool_parameters_legacy(user_input, tool_name, {'parameters_schema': tool_schema}, context)
+                if legacy_params:
+                    for param_name, param_value in legacy_params.items():
+                        if param_name in tool_schema.get('properties', {}) and param_name != 'context':
+                            collection_state.collected_params[param_name] = param_value
+                            if param_name in collection_state.missing_params:
+                                collection_state.missing_params.remove(param_name)
+            
+            # Add context if provided
+            if context:
+                collection_state.collected_params['context'] = context
+            
+            logging.info(f'[AIHandler] Parameter collection complete for {tool_name}. Collected: {len(collection_state.collected_params)}, Missing: {len(collection_state.missing_params)}')
+            return collection_state
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error collecting tool parameters: {e}')
+            return None
+    
+    def _is_cancellation_intent(self, user_input: str) -> bool:
+        """
+        Detect if user input contains cancellation intent.
+        
+        Recognizes Italian cancellation phrases like "annulla", "cancella", "stop", etc.
+        """
+        cancellation_patterns = [
+            'annulla', 'cancella', 'stop', 'basta', 'lascia perdere', 
+            'non importa', 'dimenticalo', 'ferma', 'interrompi'
+        ]
+        
+        input_lower = user_input.lower()
+        return any(pattern in input_lower for pattern in cancellation_patterns)
     
     def _convert_llm_result_to_legacy_format(self, llm_result: IntentDetectionResult) -> Dict[str, Any]:
         """
@@ -491,7 +651,7 @@ class AIHandler:
                 logging.error(f'[AIHandler] Invalid tool info: {selected_tool}')
                 return self._fallback_to_conversation(user_input, "Informazioni strumento non valide")
             
-            parameters = self._extract_tool_parameters(user_input, tool_name, selected_tool, context)
+            parameters = self._extract_tool_parameters_legacy(user_input, tool_name, selected_tool, context)
             logging.info(f'[AIHandler] Executing tool "{tool_name}" with parameters: {parameters}')
             
             tool_result = self._mcp_handler.execute_tool(tool_name, parameters)
@@ -501,7 +661,7 @@ class AIHandler:
             logging.error(f'[AIHandler] Error handling tool request: {e}')
             return self._fallback_to_conversation(user_input, f"Errore nell'esecuzione dello strumento: {str(e)}")
     
-    def _extract_tool_parameters(
+    def _extract_tool_parameters_legacy(
         self, 
         user_input: str, 
         tool_name: str, 
@@ -509,7 +669,10 @@ class AIHandler:
         context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Extract parameters for tool execution from natural language input.
+        Legacy regex-based parameter extraction (fallback method).
+        
+        Extract parameters for tool execution from natural language input using regex patterns.
+        This method serves as a fallback when LLM parameter extraction is not available.
         """
         try:
             schema = tool_info.get('parameters_schema', {})

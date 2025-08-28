@@ -259,3 +259,110 @@ def get_clarification_prompt(user_input: str, intent: str, missing_params: list)
         intent=intent,
         missing_params=missing_params
     )
+
+def get_cancellation_detection_prompt(user_input: str) -> str:
+    """
+    Generate prompt for detecting cancellation intents.
+    
+    Args:
+        user_input (str): The user's input text
+        
+    Returns:
+        str: Formatted prompt for cancellation detection
+    """
+    return CANCELLATION_DETECTION_PROMPT.format(user_input=user_input)
+
+def get_iterative_parameter_collection_prompt(user_input: str, tool_name: str, tool_schema: dict, collected_params: dict, missing_params: list) -> str:
+    """
+    Generate prompt for iterative parameter collection with context.
+    
+    Args:
+        user_input (str): The user's input text
+        tool_name (str): Name of the tool
+        tool_schema (dict): Tool parameter schema
+        collected_params (dict): Parameters already collected
+        missing_params (list): Parameters still needed
+        
+    Returns:
+        str: Formatted prompt for iterative parameter collection
+    """
+    return ITERATIVE_PARAMETER_COLLECTION_PROMPT.format(
+        user_input=user_input,
+        tool_name=tool_name,
+        tool_schema=tool_schema,
+        collected_params=collected_params,
+        missing_params=missing_params
+    )
+
+#----------------------------------------------------------------
+# PROMPT TEMPLATES AVANZATI
+#----------------------------------------------------------------
+
+CANCELLATION_DETECTION_PROMPT = """Analizza se l'input dell'utente contiene un'intenzione di cancellazione.
+
+INPUT UTENTE: {user_input}
+
+FRASI DI CANCELLAZIONE RICONOSCIUTE:
+- "annulla", "cancella", "stop", "basta"
+- "lascia perdere", "non importa", "dimenticalo"
+- "ferma", "interrompi", "abbandona"
+
+Rispondi SOLO con un JSON:
+{{"is_cancellation": true/false, "confidence": 0.0-1.0, "reasoning": "spiegazione"}}"""
+
+ITERATIVE_PARAMETER_COLLECTION_PROMPT = """Estrai parametri per il tool {tool_name} considerando il contesto della raccolta in corso.
+
+INPUT UTENTE: {user_input}
+TOOL: {tool_name}
+SCHEMA: {tool_schema}
+PARAMETRI GIÀ RACCOLTI: {collected_params}
+PARAMETRI MANCANTI: {missing_params}
+
+ISTRUZIONI:
+1. Estrai solo i parametri mancanti dall'input utente
+2. Non sovrascrivere parametri già raccolti
+3. Se l'input non contiene parametri utili, genera una domanda di chiarimento
+4. Riconosci tentativi di cancellazione
+
+Rispondi in formato JSON:
+{{
+  "extracted_parameters": {{}},
+  "clarification_needed": true/false,
+  "clarification_question": "domanda per l'utente",
+  "is_cancellation": true/false,
+  "collection_complete": true/false
+}}"""
+
+# Prompt specializzati per categorie di strumenti
+NAVIGATION_PARAMETER_COLLECTION_PROMPT = """Estrai parametri di navigazione dall'input dell'utente.
+
+INPUT: {user_input}
+
+PARAMETRI NAVIGAZIONE:
+- destination: destinazione (città, indirizzo, luogo)
+- avoid_tolls: evitare pedaggi (true/false)
+- avoid_highways: evitare autostrade (true/false)
+- route_type: tipo percorso ("fastest", "shortest", "scenic")
+
+Rispondi in JSON con i parametri trovati."""
+
+WEATHER_PARAMETER_COLLECTION_PROMPT = """Estrai parametri meteo dall'input dell'utente.
+
+INPUT: {user_input}
+
+PARAMETRI METEO:
+- location: posizione (città, "current" per posizione attuale)
+- timeframe: periodo ("now", "today", "tomorrow", "weekend")
+- weather_type: tipo info ("general", "rain", "temperature")
+
+Rispondi in JSON con i parametri trovati."""
+
+VEHICLE_PARAMETER_COLLECTION_PROMPT = """Estrai parametri veicolo dall'input dell'utente.
+
+INPUT: {user_input}
+
+PARAMETRI VEICOLO:
+- system: sistema ("general", "engine", "fuel", "tires", "battery")
+- check_type: tipo controllo ("status", "diagnostic", "alerts")
+
+Rispondi in JSON con i parametri trovati."""

@@ -85,6 +85,134 @@ socket.on('connect_error', (err) => {
     console.log('[User] Errore di connessione:', err.message || err);
 });
 
+// Tool notification handlers
+socket.on('backend_tool_notification', (payload) => {
+    console.log('[User] Tool notification received:', payload);
+    handleToolNotification(payload);
+});
+
+socket.on('backend_parameter_request', (payload) => {
+    console.log('[User] Parameter request received:', payload);
+    handleParameterRequest(payload);
+});
+
+//----------------------------------------------------------------
+/**
+ * Tool notification and visual feedback system
+ */
+//----------------------------------------------------------------
+
+let currentToolNotification = null;
+let toolActiveIndicator = null;
+
+function handleToolNotification(payload) {
+    const { tool_name, status, timestamp } = payload;
+    
+    // Remove existing notification
+    if (currentToolNotification) {
+        removeToolNotification();
+    }
+    
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `tool-notification ${status}`;
+    
+    // Set notification content based on status
+    let message = '';
+    switch (status) {
+        case 'selected':
+            message = `Tool selezionato → ${tool_name}`;
+            break;
+        case 'starting':
+            message = `Avvio tool → ${tool_name}`;
+            showToolActiveIndicator();
+            break;
+        case 'closing':
+            message = `Chiusura tool → ${tool_name}`;
+            hideToolActiveIndicator();
+            break;
+        default:
+            message = `${tool_name} → ${status}`;
+    }
+    
+    notification.textContent = message;
+    
+    // Add cancel button for selected status
+    if (status === 'selected') {
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'cancel-btn';
+        cancelBtn.textContent = 'Annulla';
+        cancelBtn.onclick = () => {
+            socket.emit('frontend_command', { data: 'annulla' });
+            removeToolNotification();
+        };
+        notification.appendChild(cancelBtn);
+    }
+    
+    // Add to DOM
+    document.body.appendChild(notification);
+    currentToolNotification = notification;
+    
+    // Auto-remove after delay (except for starting status)
+    if (status !== 'starting') {
+        setTimeout(() => {
+            removeToolNotification();
+        }, status === 'selected' ? 5000 : 3000);
+    }
+}
+
+function handleParameterRequest(payload) {
+    const { tool_name, missing_params, clarification_question } = payload;
+    
+    // Create parameter request notification
+    const notification = document.createElement('div');
+    notification.className = 'tool-notification selected';
+    notification.innerHTML = `
+        <div>${clarification_question}</div>
+        <button class="cancel-btn" onclick="cancelParameterCollection()">Annulla</button>
+    `;
+    
+    // Remove existing notification and add new one
+    if (currentToolNotification) {
+        removeToolNotification();
+    }
+    
+    document.body.appendChild(notification);
+    currentToolNotification = notification;
+}
+
+function removeToolNotification() {
+    if (currentToolNotification) {
+        currentToolNotification.classList.add('closing');
+        setTimeout(() => {
+            if (currentToolNotification && currentToolNotification.parentNode) {
+                currentToolNotification.parentNode.removeChild(currentToolNotification);
+            }
+            currentToolNotification = null;
+        }, 300);
+    }
+}
+
+function showToolActiveIndicator() {
+    if (!toolActiveIndicator) {
+        toolActiveIndicator = document.createElement('div');
+        toolActiveIndicator.className = 'tool-active-indicator';
+        document.body.appendChild(toolActiveIndicator);
+    }
+}
+
+function hideToolActiveIndicator() {
+    if (toolActiveIndicator) {
+        toolActiveIndicator.remove();
+        toolActiveIndicator = null;
+    }
+}
+
+function cancelParameterCollection() {
+    socket.emit('frontend_command', { data: 'annulla' });
+    removeToolNotification();
+}
+
 //----------------------------------------------------------------
 /**
  * Interazione utente

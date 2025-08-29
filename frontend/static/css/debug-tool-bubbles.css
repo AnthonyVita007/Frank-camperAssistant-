@@ -1,0 +1,120 @@
+/*----------------------------------------------------------------
+DEBUG TOOL BUBBLES - Blue styling for tool lifecycle notifications
+----------------------------------------------------------------*/
+
+/*----------------------------------------------------------------
+TOOL BUBBLE BASE STYLES
+----------------------------------------------------------------*/
+.bubble-tool {
+  max-width: 80ch;
+  padding: 12px 16px;
+  border-radius: 12px;
+  line-height: 1.6;
+  font-family: var(--console-font);
+  font-size: inherit;
+  word-wrap: break-word;
+  
+  /* Blue styling as specified */
+  background: #0D6EFD; /* Bootstrap Primary */
+  color: #FFFFFF;
+  border: 1px solid rgba(13, 110, 253, 0.3);
+  box-shadow:
+    0 0 10px rgba(13, 110, 253, 0.4),
+    inset 0 0 12px rgba(255, 255, 255, 0.1);
+  
+  /* Ensure proper contrast and accessibility */
+  text-shadow: none; /* Remove any inherited text shadows for better readability */
+  margin-right: auto; /* Align with backend bubbles (left side) */
+}
+
+/*----------------------------------------------------------------
+ANIMATIONS
+----------------------------------------------------------------*/
+@keyframes bubble-tool-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bubble-tool-pulse-once {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/*----------------------------------------------------------------
+ANIMATION CLASSES
+----------------------------------------------------------------*/
+.bubble-tool-enter {
+  animation: bubble-tool-enter 220ms ease-out forwards;
+}
+
+.bubble-tool-pulse-once {
+  animation: bubble-tool-pulse-once 180ms ease-in-out forwards;
+  animation-delay: 220ms; /* After enter animation completes */
+}
+
+/*----------------------------------------------------------------
+BOLD TEXT STYLING FOR TOOL NAMES
+----------------------------------------------------------------*/
+.bubble-tool strong {
+  font-weight: bold;
+  color: inherit; /* Maintain white color */
+}
+
+/*----------------------------------------------------------------
+ACCESSIBILITY ENHANCEMENTS
+----------------------------------------------------------------*/
+.bubble-tool[role="status"] {
+  /* Ensure proper ARIA announcement */
+  position: relative;
+}
+
+/*----------------------------------------------------------------
+RESPONSIVE ADJUSTMENTS
+----------------------------------------------------------------*/
+@media (max-width: 768px) {
+  .bubble-tool {
+    max-width: 90vw;
+    padding: 10px 14px;
+    font-size: 18px;
+  }
+}
+
+/*----------------------------------------------------------------
+HIGH CONTRAST MODE SUPPORT
+----------------------------------------------------------------*/
+@media (prefers-contrast: high) {
+  .bubble-tool {
+    border-width: 2px;
+    border-color: #FFFFFF;
+    box-shadow: none;
+  }
+}
+
+/*----------------------------------------------------------------
+REDUCED MOTION SUPPORT
+----------------------------------------------------------------*/
+@media (prefers-reduced-motion: reduce) {
+  .bubble-tool-enter {
+    animation: none;
+    opacity: 1;
+    transform: translateY(0);
+  }
+  
+  .bubble-tool-pulse-once {
+    animation: none;
+    transform: scale(1);
+  }
+}

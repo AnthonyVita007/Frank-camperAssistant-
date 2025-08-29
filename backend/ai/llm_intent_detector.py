@@ -279,6 +279,7 @@ class LLMIntentDetector:
     ) -> Dict[str, Any]:
         """
         Extract parameters for tool execution from natural language input.
+        Enhanced with retry logic for better reliability.
         
         Args:
             user_input (str): The user's input text
@@ -297,32 +298,49 @@ class LLMIntentDetector:
             # Generate parameter extraction prompt
             prompt = get_parameter_extraction_prompt(user_input, tool_name, tool_schema)
             
-            # Make LLM request
-            response = self._make_llm_request(prompt)
+            # Try extraction with retry logic (max 2 attempts)
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    # Make LLM request with lower temperature for more consistent output
+                    response = self._make_llm_request_for_parameters(prompt)
+                    
+                    if not response:
+                        logging.warning(f'[LLMIntentDetector] Empty response for parameter extraction (attempt {attempt + 1})')
+                        continue
+                    
+                    # Parse parameter response
+                    try:
+                        # Clean the response first to remove markdown formatting
+                        cleaned_response = self._clean_json_response(response)
+                        logging.debug(f'[LLMIntentDetector] Cleaned parameter response (attempt {attempt + 1}): {cleaned_response[:200]}...')
+                        
+                        parameters = json.loads(cleaned_response)
+                        
+                        # Validate parameters against schema if provided
+                        validated_params = self._validate_parameters(parameters, tool_schema)
+                        
+                        logging.debug(f'[LLMIntentDetector] Extracted parameters for {tool_name}: {validated_params}')
+                        return validated_params
+                        
+                    except json.JSONDecodeError as e:
+                        logging.error(f'[LLMIntentDetector] Failed to parse parameter JSON (attempt {attempt + 1}): {e}')
+                        logging.debug(f'[LLMIntentDetector] Raw parameter response: {response[:200]}...')
+                        logging.debug(f'[LLMIntentDetector] Cleaned parameter response: {cleaned_response[:200] if "cleaned_response" in locals() else "N/A"}...')
+                        
+                        # If this was the last attempt, fall through to return empty
+                        if attempt == max_retries - 1:
+                            return {}
+                        # Otherwise, try again
+                        continue
+                        
+                except Exception as e:
+                    logging.error(f'[LLMIntentDetector] Error in parameter extraction attempt {attempt + 1}: {e}')
+                    if attempt == max_retries - 1:
+                        return {}
+                    continue
             
-            if not response:
-                logging.warning('[LLMIntentDetector] Empty response for parameter extraction')
-                return {}
-            
-            # Parse parameter response
-            try:
-                # Clean the response first to remove markdown formatting
-                cleaned_response = self._clean_json_response(response)
-                logging.debug(f'[LLMIntentDetector] Cleaned parameter response: {cleaned_response[:200]}...')
-                
-                parameters = json.loads(cleaned_response)
-                
-                # Validate parameters against schema if provided
-                validated_params = self._validate_parameters(parameters, tool_schema)
-                
-                logging.debug(f'[LLMIntentDetector] Extracted parameters for {tool_name}: {validated_params}')
-                return validated_params
-                
-            except json.JSONDecodeError as e:
-                logging.error(f'[LLMIntentDetector] Failed to parse parameter JSON: {e}')
-                logging.debug(f'[LLMIntentDetector] Raw parameter response: {response[:200]}...')
-                logging.debug(f'[LLMIntentDetector] Cleaned parameter response: {cleaned_response[:200] if "cleaned_response" in locals() else "N/A"}...')
-                return {}
+            return {}
                 
         except Exception as e:
             logging.error(f'[LLMIntentDetector] Error extracting parameters: {e}')
@@ -368,6 +386,7 @@ class LLMIntentDetector:
     def _clean_json_response(self, response: str) -> str:
         """
         Clean JSON response by removing markdown code blocks and formatting.
+        Enhanced to handle mixed text/JSON responses more robustly.
         
         Args:
             response (str): Raw response that may contain markdown
@@ -394,15 +413,61 @@ class LLMIntentDetector:
             logging.debug(f'[LLMIntentDetector] Extracted JSON from code block')
             return cleaned
         
-        # If no code block found, try to find JSON within the text
-        # Look for { ... } pattern spanning multiple lines
-        json_pattern = r'\{.*\}'
-        json_match = re.search(json_pattern, response, re.DOTALL)
+        # Try multiple JSON extraction strategies
+        json_patterns = [
+            # Strategy 1: Look for complete { ... } pattern spanning multiple lines
+            r'\{.*\}',
+            # Strategy 2: Look for JSON starting with { and ending with }
+            r'\{[^{}]*\}',
+            # Strategy 3: More flexible - handle nested braces
+            r'\{(?:[^{}]|{[^{}]*})*\}',
+        ]
         
-        if json_match:
-            cleaned = json_match.group(0).strip()
-            logging.debug(f'[LLMIntentDetector] Extracted JSON from response text')
-            return cleaned
+        for pattern in json_patterns:
+            json_match = re.search(pattern, response, re.DOTALL)
+            if json_match:
+                cleaned = json_match.group(0).strip()
+                # Try to validate it's actually valid JSON
+                try:
+                    import json
+                    json.loads(cleaned)  # Test if it's valid JSON
+                    logging.debug(f'[LLMIntentDetector] Extracted valid JSON from response text')
+                    return cleaned
+                except json.JSONDecodeError:
+                    continue  # Try next pattern
+        
+        # Strategy 4: Extract from common LLM response patterns
+        # Look for lines that contain JSON-like structures
+        lines = response.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.startswith('{') and line.endswith('}'):
+                try:
+                    import json
+                    json.loads(line)  # Test if it's valid JSON
+                    logging.debug(f'[LLMIntentDetector] Extracted JSON from single line')
+                    return line
+                except json.JSONDecodeError:
+                    continue
+        
+        # Strategy 5: Try to extract JSON after common prefixes
+        prefixes = ['json:', 'result:', 'parameters:', 'risposta:', 'output:']
+        for prefix in prefixes:
+            if prefix in response.lower():
+                parts = response.lower().split(prefix, 1)
+                if len(parts) > 1:
+                    potential_json = parts[1].strip()
+                    # Look for JSON in this part
+                    json_match = re.search(r'\{.*\}', potential_json, re.DOTALL)
+                    if json_match:
+                        cleaned = json_match.group(0).strip()
+                        try:
+                            import json
+                            json.loads(cleaned)
+                            logging.debug(f'[LLMIntentDetector] Extracted JSON after prefix: {prefix}')
+                            return cleaned
+                        except json.JSONDecodeError:
+                            continue
         
         # Return as-is if no patterns found
         logging.debug(f'[LLMIntentDetector] No JSON patterns found, returning response as-is')
@@ -440,6 +505,42 @@ class LLMIntentDetector:
                 
         except Exception as e:
             logging.error(f'[LLMIntentDetector] Error making LLM request: {e}')
+            return None
+    
+    def _make_llm_request_for_parameters(self, prompt: str) -> Optional[str]:
+        """
+        Make a specialized LLM request for parameter extraction with lower temperature.
+        
+        Args:
+            prompt (str): The prompt to send to the LLM
+            
+        Returns:
+            Optional[str]: LLM response or None if failed
+        """
+        try:
+            if not self._ai_processor:
+                logging.warning('[LLMIntentDetector] AI processor not available for parameter extraction')
+                return None
+            
+            # Use lower temperature and more structured settings for parameter extraction
+            context = {
+                'temperature': 0.1,  # Very low temperature for consistent structured output
+                'max_tokens': 200,   # Shorter responses for parameter extraction
+                'timeout': 30,       # Shorter timeout for parameter requests
+                'system_role': 'parameter_extractor'
+            }
+            
+            # Make the request
+            response = self._ai_processor.process_request(prompt, context)
+            
+            if response.success and response.text:
+                return response.text.strip()
+            else:
+                logging.warning(f'[LLMIntentDetector] LLM parameter request failed: {response.message}')
+                return None
+                
+        except Exception as e:
+            logging.error(f'[LLMIntentDetector] Error making LLM parameter request: {e}')
             return None
     
     def _parse_intent_response(self, intent_data: Dict[str, Any], user_input: str) -> IntentDetectionResult:

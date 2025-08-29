@@ -604,25 +604,189 @@ class AIHandler:
         context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Minimal fallback for parameter extraction when LLM is not available.
+        Enhanced fallback for parameter extraction when LLM fails.
+        Uses pattern matching for common parameters.
         """
         try:
             params: Dict[str, Any] = {}
             schema = tool_info.get('parameters_schema', {}) or {}
+            tool_name = tool_info.get('name', '').lower()
             
-            # Include contesto se presente
+            # Include context if present
             if context:
                 params['context'] = context
             
-            # Opzionale: lasciare traccia dell'input grezzo se previsto dallo schema
+            # Enhanced pattern matching based on tool category
+            if 'navigation' in tool_name:
+                params.update(self._extract_navigation_params_fallback(user_input))
+            elif 'weather' in tool_name:
+                params.update(self._extract_weather_params_fallback(user_input))
+            elif 'vehicle' in tool_name:
+                params.update(self._extract_vehicle_params_fallback(user_input))
+            elif 'maintenance' in tool_name:
+                params.update(self._extract_maintenance_params_fallback(user_input))
+            
+            # Include raw user input if schema expects it
             if 'user_input' in (schema.get('properties', {}) or {}):
                 params['user_input'] = user_input
             
-            logging.debug(f'[AIHandler] Fallback params for {tool_info.get("name", "unknown")}: {params}')
+            logging.debug(f'[AIHandler] Enhanced fallback params for {tool_info.get("name", "unknown")}: {params}')
             return params
         except Exception as e:
-            logging.error(f'[AIHandler] Error in fallback parameter extraction: {e}')
+            logging.error(f'[AIHandler] Error in enhanced fallback parameter extraction: {e}')
             return {}
+    
+    def _extract_navigation_params_fallback(self, user_input: str) -> Dict[str, Any]:
+        """Extract navigation parameters using pattern matching."""
+        params = {}
+        text = user_input.lower()
+        
+        # Destination extraction patterns
+        import re
+        
+        # Common destination patterns
+        destination_patterns = [
+            r'(?:portami|vai|naviga|rotta|strada).*?(?:a|per|verso)\s+([a-zA-ZÀ-ÿ\s]+?)(?:\s|$|,|\.|\?|!)',
+            r'(?:destinazione|meta).*?[:]\s*([a-zA-ZÀ-ÿ\s]+?)(?:\s|$|,|\.|\?|!)',
+            r'(?:puoi\s+)?portarmi\s+a\s+([a-zA-ZÀ-ÿ\s]+?)(?:\s|$|,|\.|\?|!)',  # Handle "puoi portarmi a..."
+            r'^([a-zA-ZÀ-ÿ\s]+?)(?:\s|$)$',  # Single word/location only
+        ]
+        
+        for pattern in destination_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                destination = match.group(1).strip().title()
+                if len(destination) > 1:  # Avoid single characters
+                    params['destination'] = destination
+                    break
+        
+        # Preferences extraction
+        if any(word in text for word in ['pedaggi', 'pedaggio', 'toll']):
+            params['avoid_tolls'] = 'evita' in text or 'senza' in text or 'no' in text
+        
+        if any(word in text for word in ['autostrade', 'autostrada', 'highway']):
+            params['avoid_highways'] = 'evita' in text or 'senza' in text or 'no' in text
+        
+        # Route type
+        if any(word in text for word in ['veloce', 'rapido', 'fastest']):
+            params['route_type'] = 'fastest'
+        elif any(word in text for word in ['breve', 'corto', 'shortest']):
+            params['route_type'] = 'shortest'
+        elif any(word in text for word in ['panoramic', 'scenic', 'bello']):
+            params['route_type'] = 'scenic'
+        
+        return params
+    
+    def _extract_weather_params_fallback(self, user_input: str) -> Dict[str, Any]:
+        """Extract weather parameters using pattern matching."""
+        params = {}
+        text = user_input.lower()
+        
+        import re
+        
+        # Location extraction
+        location_patterns = [
+            r'(?:a|per|di|in)\s+([a-zA-ZÀ-ÿ\s]+?)(?:\s|$|,|\.|\?|!)',
+            r'meteo\s+([a-zA-ZÀ-ÿ\s]+?)(?:\s|$|,|\.|\?|!)',
+        ]
+        
+        for pattern in location_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                location = match.group(1).strip().title()
+                if len(location) > 1:
+                    params['location'] = location
+                    break
+        
+        # Time range
+        if any(word in text for word in ['domani', 'tomorrow']):
+            params['time_range'] = 'tomorrow'
+        elif any(word in text for word in ['oggi', 'today']):
+            params['time_range'] = 'today'
+        elif any(word in text for word in ['weekend', 'fine settimana']):
+            params['time_range'] = 'weekend'
+        elif any(word in text for word in ['settimana', 'week']):
+            params['time_range'] = 'week'
+        elif any(word in text for word in ['ora', 'adesso', 'now']):
+            params['time_range'] = 'now'
+        
+        # Specific weather data
+        if any(word in text for word in ['pioggia', 'piove', 'rain']):
+            params['specific_data'] = 'rain'
+        elif any(word in text for word in ['temperatura', 'temp', 'caldo', 'freddo']):
+            params['specific_data'] = 'temperature'
+        elif any(word in text for word in ['vento', 'wind']):
+            params['specific_data'] = 'wind'
+        
+        return params
+    
+    def _extract_vehicle_params_fallback(self, user_input: str) -> Dict[str, Any]:
+        """Extract vehicle parameters using pattern matching."""
+        params = {}
+        text = user_input.lower()
+        
+        # System identification
+        if any(word in text for word in ['motore', 'engine']):
+            params['system'] = 'engine'
+        elif any(word in text for word in ['carburante', 'benzina', 'fuel', 'gas']):
+            params['system'] = 'fuel'
+        elif any(word in text for word in ['pneumatic', 'gomme', 'tires']):
+            params['system'] = 'tires'
+        elif any(word in text for word in ['batteria', 'battery']):
+            params['system'] = 'battery'
+        else:
+            params['system'] = 'general'
+        
+        # Check type
+        if any(word in text for word in ['stato', 'status', 'come va']):
+            params['check_type'] = 'status'
+        elif any(word in text for word in ['diagnostic', 'controllo', 'verifica']):
+            params['check_type'] = 'diagnostic'
+        elif any(word in text for word in ['livell', 'level']):
+            params['check_type'] = 'levels'
+        
+        # Urgency
+        if any(word in text for word in ['urgente', 'urgent', 'subito']):
+            params['urgency'] = 'high'
+        elif any(word in text for word in ['importante', 'medium']):
+            params['urgency'] = 'medium'
+        else:
+            params['urgency'] = 'low'
+        
+        return params
+    
+    def _extract_maintenance_params_fallback(self, user_input: str) -> Dict[str, Any]:
+        """Extract maintenance parameters using pattern matching."""
+        params = {}
+        text = user_input.lower()
+        
+        # Maintenance type
+        if any(word in text for word in ['olio', 'oil']):
+            params['maintenance_type'] = 'oil_change'
+        elif any(word in text for word in ['filtro', 'filter']):
+            params['maintenance_type'] = 'filter'
+        elif any(word in text for word in ['revisione', 'inspection', 'controllo']):
+            params['maintenance_type'] = 'inspection'
+        else:
+            params['maintenance_type'] = 'general'
+        
+        # Time filter
+        if any(word in text for word in ['scadut', 'overdue', 'ritardo']):
+            params['time_filter'] = 'overdue'
+        elif any(word in text for word in ['prossim', 'upcoming', 'scadenza']):
+            params['time_filter'] = 'upcoming'
+        else:
+            params['time_filter'] = 'all'
+        
+        # Urgency
+        if any(word in text for word in ['urgente', 'urgent', 'subito']):
+            params['urgency'] = 'high'
+        elif any(word in text for word in ['importante', 'medium']):
+            params['urgency'] = 'medium'
+        else:
+            params['urgency'] = 'low'
+        
+        return params
     
     def _convert_tool_result_to_ai_response(
         self, 

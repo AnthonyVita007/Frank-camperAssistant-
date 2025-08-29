@@ -50,8 +50,24 @@ RICHIESTA: {user_input}
 TOOL: {tool_name}
 SCHEMA PARAMETRI: {tool_schema}
 
-Estrai tutti i parametri rilevanti dal linguaggio naturale italiano.
-Rispondi in formato JSON con i parametri estratti."""
+ISTRUZIONI IMPORTANTI:
+- Rispondi SOLO con un oggetto JSON valido
+- NON aggiungere testo, spiegazioni o markdown
+- Estrai SOLO i parametri rilevanti dalla richiesta
+- Usa i nomi dei parametri esatti dello schema
+- Se un parametro non è menzionato, NON includerlo nel JSON
+
+ESEMPI:
+Richiesta: "Portami a Roma"
+Risposta: {{"destination": "Roma"}}
+
+Richiesta: "Navigazione per Milano evitando i pedaggi"
+Risposta: {{"destination": "Milano", "avoid_tolls": true}}
+
+Richiesta: "Che tempo farà domani a Bologna?"
+Risposta: {{"location": "Bologna", "time_range": "tomorrow"}}
+
+ESTRAI I PARAMETRI E RISPONDI SOLO CON JSON VALIDO:"""
 
 CLARIFICATION_PROMPT = """La richiesta dell'utente non è sufficientemente chiara per determinare i parametri necessari.
 
@@ -77,7 +93,17 @@ PARAMETRI DA ESTRARRE:
 - route_type: tipo percorso (fastest/shortest/scenic)
 - waypoints: punti intermedi del percorso
 
-Rispondi in formato JSON con i parametri estratti."""
+ISTRUZIONI:
+- Rispondi SOLO con un oggetto JSON valido
+- NON aggiungere testo o spiegazioni
+- Includi solo i parametri menzionati nella richiesta
+
+ESEMPI:
+"Portami a Roma" -> {{"destination": "Roma"}}
+"Vai a Milano evitando pedaggi" -> {{"destination": "Milano", "avoid_tolls": true}}
+"Percorso più veloce per Firenze" -> {{"destination": "Firenze", "route_type": "fastest"}}
+
+ESTRAI E RISPONDI SOLO CON JSON:"""
 
 WEATHER_EXTRACTION_PROMPT = """Estrai i parametri meteo dalla richiesta:
 
@@ -89,7 +115,17 @@ PARAMETRI DA ESTRARRE:
 - weather_type: tipo info (current/forecast/alerts)
 - specific_data: dati specifici (temperature/rain/wind/etc)
 
-Rispondi in formato JSON con i parametri estratti."""
+ISTRUZIONI:
+- Rispondi SOLO con un oggetto JSON valido
+- NON aggiungere testo o spiegazioni
+- Includi solo i parametri menzionati nella richiesta
+
+ESEMPI:
+"Che tempo fa?" -> {{"time_range": "now"}}
+"Pioverà domani a Milano?" -> {{"location": "Milano", "time_range": "tomorrow", "specific_data": "rain"}}
+"Previsioni per il weekend" -> {{"time_range": "weekend", "weather_type": "forecast"}}
+
+ESTRAI E RISPONDI SOLO CON JSON:"""
 
 VEHICLE_EXTRACTION_PROMPT = """Estrai i parametri di stato veicolo dalla richiesta:
 
@@ -100,7 +136,17 @@ PARAMETRI DA ESTRARRE:
 - check_type: tipo controllo (status/diagnostic/levels)
 - urgency: urgenza (low/medium/high)
 
-Rispondi in formato JSON con i parametri estratti."""
+ISTRUZIONI:
+- Rispondi SOLO con un oggetto JSON valido
+- NON aggiungere testo o spiegazioni
+- Includi solo i parametri menzionati nella richiesta
+
+ESEMPI:
+"Come va il motore?" -> {{"system": "engine", "check_type": "status"}}
+"Controlla il carburante" -> {{"system": "fuel", "check_type": "levels"}}
+"Diagnostica completa urgente" -> {{"check_type": "diagnostic", "urgency": "high"}}
+
+ESTRAI E RISPONDI SOLO CON JSON:"""
 
 MAINTENANCE_EXTRACTION_PROMPT = """Estrai i parametri di manutenzione dalla richiesta:
 
@@ -112,7 +158,17 @@ PARAMETRI DA ESTRARRE:
 - urgency: urgenza (low/medium/high)
 - component: componente specifico se menzionato
 
-Rispondi in formato JSON con i parametri estratti."""
+ISTRUZIONI:
+- Rispondi SOLO con un oggetto JSON valido
+- NON aggiungere testo o spiegazioni
+- Includi solo i parametri menzionati nella richiesta
+
+ESEMPI:
+"Cambio olio" -> {{"maintenance_type": "oil_change"}}
+"Controlli in scadenza" -> {{"time_filter": "upcoming"}}
+"Manutenzione urgente filtri" -> {{"maintenance_type": "filter", "urgency": "high"}}
+
+ESTRAI E RISPONDI SOLO CON JSON:"""
 
 #----------------------------------------------------------------
 # PROMPT PER GESTIONE CONTESTO

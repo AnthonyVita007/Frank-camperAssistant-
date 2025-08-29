@@ -91,9 +91,28 @@ class MainController:
             self._command_processor = CommandProcessor()
             logging.debug('[MainController] Command processor initialized')
             
-            # Initialize AI handler with MCP integration (depends on MCP handler)
-            self._ai_handler = AIHandler(mcp_handler=self._mcp_handler)
-            logging.debug('[MainController] AI handler initialized with MCP support')
+            #----------------------------------------------------------------
+            # CREAZIONE EVENT EMITTER PER AI HANDLER
+            #----------------------------------------------------------------
+            def backend_action_emitter(action: str, data):
+                """
+                Emette eventi backend_action verso il frontend Debug.
+                """
+                try:
+                    self._socketio_instance.emit('backend_action', {
+                        'action': action,
+                        'data': data
+                    })
+                    logging.debug(f'[MainController] Emitted backend_action: {action}')
+                except Exception as e:
+                    logging.warning(f'[MainController] Failed to emit backend_action {action}: {e}')
+            
+            # Initialize AI handler with MCP integration AND event emitter
+            self._ai_handler = AIHandler(
+                mcp_handler=self._mcp_handler,
+                event_emitter=backend_action_emitter
+            )
+            logging.debug('[MainController] AI handler initialized with MCP support and event emitter')
             
             # Initialize connection manager (depends on SocketIO)
             self._connection_manager = ConnectionManager(self._socketio_instance)

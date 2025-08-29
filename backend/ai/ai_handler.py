@@ -9,7 +9,7 @@ managing AI request validation, processing coordination, and logging.
 # IMPORT E TIPOLOGIE BASE
 #----------------------------------------------------------------
 import logging
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union, Callable
 
 from .ai_processor import AIProcessor  # Il processor (può essere single-provider o dual-provider)
 from .ai_response import AIResponse
@@ -43,24 +43,21 @@ class AIHandler:
         _llm_intent_enabled (bool): Whether LLM intent detection is enabled
     """
     
-    #----------------------------------------------------------------
-    # INIZIALIZZAZIONE AI HANDLER CON SUPPORTO MCP E INTENT LLM
-    #----------------------------------------------------------------
+#----------------------------------------------------------------
+# COSTRUTTORE AIHandler CON EVENT EMITTER OPZIONALE
+#----------------------------------------------------------------
     def __init__(
-        self, 
-        ai_processor: Optional[AIProcessor] = None, 
-        mcp_handler: Optional = None,  # type: ignore
-        llm_intent_enabled: bool = True, 
-        llm_intent_detector: Optional[LLMIntentDetector] = None  # type: ignore
+    self, 
+    ai_processor: Optional[AIProcessor] = None, 
+    mcp_handler: Optional = None,  # type: ignore
+    llm_intent_enabled: bool = True, 
+    llm_intent_detector: Optional[LLMIntentDetector] = None,  # type: ignore
+    event_emitter: Optional[Callable[[str, Dict[str, Any]], None]] = None
     ) -> None:
         """
         Initialize the AIHandler with optional MCP support and LLM intent detection.
-        
-        Args:
-            ai_processor (Optional[AIProcessor]): Custom AI processor instance. If None, creates a default one.
-            mcp_handler (Optional): MCP handler for tool interactions. If None, tool features will be disabled.
-            llm_intent_enabled (bool): Whether to enable LLM-based intent detection.
-            llm_intent_detector (Optional[LLMIntentDetector]): Pre-configured LLM intent detector.
+        event_emitter: callable opzionale con firma (action: str, data: Dict[str, Any]) -> None
+                    usato per emettere 'backend_action' verso il frontend Debug.
         """
         try:
             #----------------------------------------------------------------
@@ -68,6 +65,11 @@ class AIHandler:
             #----------------------------------------------------------------
             self._ai_processor = ai_processor or AIProcessor()
             self._is_enabled = self._ai_processor.is_available()
+            
+            #----------------------------------------------------------------
+            # EMITTER EVENTI BACKEND_ACTION (opzionale)
+            #----------------------------------------------------------------
+            self._event_emitter: Optional[Callable[[str, Dict[str, Any]], None]] = event_emitter
             
             #----------------------------------------------------------------
             # INTEGRAZIONE MCP (TOOLS)
@@ -125,7 +127,8 @@ class AIHandler:
             self._tool_detection_enabled = False
             self._llm_intent_enabled = False
             self._llm_intent_detector = None
-    
+            self._event_emitter = None
+
     @classmethod
     def from_config(
         cls, 
@@ -469,6 +472,7 @@ class AIHandler:
     #----------------------------------------------------------------
     # GESTIONE RICHIESTE TRAMITE STRUMENTI MCP
     #----------------------------------------------------------------
+
     def _handle_tool_request(
         self, 
         user_input: str, 
@@ -477,12 +481,19 @@ class AIHandler:
     ) -> AIResponse:
         """
         Handle a request that requires tool execution.
+        Ora emette eventi 'backend_action' per mostrare le bubble blu in Debug:
+        - tool_selected
+        - tool_ready_to_start
+        - tool_started
+        - tool_finished
         """
         try:
+            #----------------------------------------------------------------
+            # IDENTIFICAZIONE CATEGORIA E SELEZIONE TOOL
+            #----------------------------------------------------------------
             primary_category = tool_intent.get('primary_category')
             logging.info(f'[AIHandler] Processing tool request for category: {primary_category}')
             
-            # Recupera strumenti disponibili per categoria
             available_tools = self._mcp_handler.get_tools_by_category(primary_category)
             if not available_tools:
                 logging.warning(f'[AIHandler] No tools available for category: {primary_category}')
@@ -494,16 +505,52 @@ class AIHandler:
                 logging.error(f'[AIHandler] Invalid tool info: {selected_tool}')
                 return self._fallback_to_conversation(user_input, "Informazioni strumento non valide")
             
+            # Notifica selezione tool (bubble blu "Tool selected → <tool>")
+            self._emit_backend_action('tool_selected', {'tool_name': tool_name})
+            
+            #----------------------------------------------------------------
+            # ESTRAZIONE PARAMETRI (LLM + fallback) E VALUTAZIONE "READY"
+            #----------------------------------------------------------------
             parameters = self._extract_tool_parameters(user_input, tool_name, selected_tool, context)
+            
+            schema = (selected_tool.get('parameters_schema') or {})
+            required = (schema.get('required') or [])
+            missing = [r for r in required if r not in parameters]
+            if not missing:
+                # Notifica che i parametri sono completi (bubble blu "Starting Tool")
+                self._emit_backend_action('tool_ready_to_start', {'tool_name': tool_name})
+            else:
+                logging.debug(f"[AIHandler] Missing required parameters for {tool_name}: {missing}")
+                # Nota: la gestione delle domande di chiarimento può essere emessa con 'tool_clarification'
+                # quando si implementa il relativo flusso
+            
+            #----------------------------------------------------------------
+            # ESECUZIONE TOOL CON NOTIFICHE CICLO DI VITA
+            #----------------------------------------------------------------
             logging.info(f'[AIHandler] Executing tool "{tool_name}" with parameters: {parameters}')
             
+            # Notifica avvio tool
+            self._emit_backend_action('tool_started', {'tool_name': tool_name, 'parameters': parameters})
+            
+            # Esecuzione del tool tramite MCP
             tool_result = self._mcp_handler.execute_tool(tool_name, parameters)
+            
+            # Notifica completamento tool con stato
+            try:
+                status_value = getattr(tool_result.status, 'value', str(tool_result.status))
+            except Exception:
+                status_value = 'unknown'
+            self._emit_backend_action('tool_finished', {'tool_name': tool_name, 'status': status_value})
+            
+            #----------------------------------------------------------------
+            # CONVERSIONE RISULTATO TOOL → AIResponse
+            #----------------------------------------------------------------
             return self._convert_tool_result_to_ai_response(tool_result, tool_name, user_input)
         
         except Exception as e:
             logging.error(f'[AIHandler] Error handling tool request: {e}')
             return self._fallback_to_conversation(user_input, f"Errore nell'esecuzione dello strumento: {str(e)}")
-    
+        
     def _extract_tool_parameters(
         self, 
         user_input: str, 
@@ -982,7 +1029,20 @@ class AIHandler:
                 status['llm_intent_status'] = f'error: {str(e)}'
         
         return status
-    
+
+    def _emit_backend_action(self, action: str, data: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Emette un evento 'backend_action' usando l'emitter passato al costruttore.
+        Se l'emitter non è configurato, effettua solo un log di debug.
+        """
+        try:
+            if callable(self._event_emitter):
+                self._event_emitter(action, data or {})
+            else:
+                logging.debug(f"[AIHandler] (no-emitter) backend_action: {action} {data or {}}")
+        except Exception as e:
+            logging.warning(f"[AIHandler] Failed to emit backend_action '{action}': {e}")
+
     def shutdown(self) -> None:
         """
         Shutdown the AI handler and clean up resources.

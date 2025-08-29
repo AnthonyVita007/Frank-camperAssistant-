@@ -712,7 +712,6 @@ class AIProcessor:
             elif self._current_provider == AIProvider.GEMINI:
                 # Note: Gemini streaming not implemented in this version
                 # Fall back to non-streaming
-                yield "Elaborazione in corso con Gemini..."
                 response = self._process_with_gemini(user_input, context)
                 yield response.text
                 

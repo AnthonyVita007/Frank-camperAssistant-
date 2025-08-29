@@ -108,3 +108,25 @@ class ConnectionManager:
             logging.debug(f'[ConnectionManager] Event "{event}" emitted to client')
         except Exception as e:
             logging.error(f'[ConnectionManager] Failed to emit event "{event}": {e}')
+
+    #----------------------------------------------------------------
+    # EMISSIONE EVENTI BACKEND_ACTION (supporto bubble blu in Debug)
+    #----------------------------------------------------------------
+    def emit_backend_action(self, action: str, data: Dict[str, Any] = None) -> None:
+        """
+        Emit a standardized 'backend_action' event used by the Debug UI
+        to mostrare le bubble blu del ciclo di vita dei tool.
+        
+        Args:
+            action (str): Azione da notificare (es: 'tool_selected', 'tool_ready_to_start', 'tool_started', 'tool_finished', 'tool_canceled')
+            data (Dict[str, Any]): Dati addizionali (es: {'tool_name': 'set_route_sample'})
+        """
+        payload = {
+            'action': action,
+            'data': data or {}
+        }
+        try:
+            emit('backend_action', payload)
+            logging.debug(f'[ConnectionManager] backend_action emitted: {action} - {payload["data"]}')
+        except Exception as e:
+            logging.error(f'[ConnectionManager] Failed to emit backend_action "{action}": {e}')

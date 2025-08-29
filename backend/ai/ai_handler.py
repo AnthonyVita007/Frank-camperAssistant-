@@ -31,6 +31,9 @@ class AIHandler:
     MCP (Model Context Protocol) integration for tool-based interactions and advanced
     LLM-based intent recognition with pattern matching fallback.
     
+    Parameter extraction for tools is handled entirely by the LLM system when available,
+    with a minimal non-intrusive fallback for when LLM is disabled.
+    
     Attributes:
         _ai_processor (AIProcessor): The AI processor instance
         _is_enabled (bool): Whether AI processing is enabled
@@ -509,91 +512,117 @@ class AIHandler:
         context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Extract parameters for tool execution from natural language input.
+        Extract parameters for tool execution from natural language input using LLM.
         """
         try:
-            schema = tool_info.get('parameters_schema', {})
-            required_params = schema.get('required', [])
-            parameters: Dict[str, Any] = {}
-            input_lower = user_input.lower()
+            schema = tool_info.get('parameters_schema', {}) or {}
             
-            # Navigation
-            if 'navigation' in tool_name.lower() or 'route' in tool_name.lower():
-                if 'destination' in required_params:
-                    destination = self._extract_destination(user_input)
-                    if destination:
-                        parameters['destination'] = destination
-                if 'preferences' in schema.get('properties', {}):
-                    preferences = {}
-                    if 'pedaggi' in input_lower and ('evita' in input_lower or 'senza' in input_lower):
-                        preferences['avoid_tolls'] = True
-                    if 'autostrada' in input_lower and ('evita' in input_lower or 'senza' in input_lower):
-                        preferences['avoid_highways'] = True
-                    if preferences:
-                        parameters['preferences'] = preferences
+            # Usa LLMIntentDetector se abilitato
+            if self._llm_intent_enabled and self._llm_intent_detector:
+                logging.debug(f'[AIHandler] Using LLM parameter extraction for tool: {tool_name}')
+                llm_params = self._llm_intent_detector.extract_parameters(
+                    user_input=user_input,
+                    tool_name=tool_name,
+                    tool_schema=schema,
+                    context=context
+                )
+                if llm_params:
+                    validated = self._validate_extracted_parameters(llm_params, schema)
+                    logging.debug(f'[AIHandler] LLM validated parameters for {tool_name}: {validated}')
+                    return validated
+                else:
+                    logging.warning(f'[AIHandler] LLM parameter extraction returned empty for {tool_name}')
             
-            # Weather
-            elif 'weather' in tool_name.lower() or 'meteo' in tool_name.lower():
-                if 'location' in required_params:
-                    location = self._extract_location(user_input)
-                    parameters['location'] = location if location else 'current'
-            
-            # Vehicle
-            elif 'vehicle' in tool_name.lower():
-                if 'system' in schema.get('properties', {}):
-                    if 'carburante' in input_lower or 'benzina' in input_lower:
-                        parameters['system'] = 'fuel'
-                    elif 'pneumatici' in input_lower:
-                        parameters['system'] = 'tires'
-                    elif 'motore' in input_lower:
-                        parameters['system'] = 'engine'
-                    else:
-                        parameters['system'] = 'general'
-            
-            if context:
-                parameters['context'] = context
-            
-            logging.debug(f'[AIHandler] Extracted parameters for {tool_name}: {parameters}')
-            return parameters
+            # Fallback minimale (non intrusivo)
+            logging.info(f'[AIHandler] Using fallback parameter extraction for {tool_name}')
+            return self._extract_parameters_fallback(user_input, tool_info, context)
         
         except Exception as e:
             logging.error(f'[AIHandler] Error extracting tool parameters: {e}')
+            return self._extract_parameters_fallback(user_input, tool_info, context)
+    
+    def _validate_extracted_parameters(
+        self, 
+        parameters: Dict[str, Any], 
+        schema: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Validate and normalize parameters extracted from LLM against tool schema.
+        """
+        try:
+            if not schema:
+                return parameters or {}
+            
+            validated: Dict[str, Any] = {}
+            props = schema.get('properties', {}) or {}
+            
+            for name, value in (parameters or {}).items():
+                if name in props:
+                    validated[name] = self._normalize_parameter_value(value, props.get(name, {}))
+                else:
+                    logging.debug(f'[AIHandler] Ignoring param not in schema: {name}')
+            
+            # Log eventuali required mancanti (non blocca)
+            required = schema.get('required', []) or []
+            missing = [r for r in required if r not in validated]
+            if missing:
+                logging.warning(f'[AIHandler] Missing required parameters after LLM extraction: {missing}')
+            
+            return validated
+        except Exception as e:
+            logging.error(f'[AIHandler] Error validating parameters: {e}')
+            return parameters or {}
+    
+    def _normalize_parameter_value(self, value: Any, property_schema: Dict[str, Any]) -> Any:
+        """
+        Normalize parameter value based on schema type definition.
+        """
+        try:
+            expected = (property_schema or {}).get('type', 'string')
+            
+            if expected == 'boolean':
+                if isinstance(value, str):
+                    return value.strip().lower() in ('true', '1', 'yes', 'si', 'sì', 'on')
+                return bool(value)
+            if expected == 'integer':
+                return int(value) if value is not None else None
+            if expected == 'number':
+                return float(value) if value is not None else None
+            if expected == 'string':
+                # Normalizzazione minima stringhe
+                return str(value).strip() if value is not None else ''
+            
+            return value
+        except Exception as e:
+            logging.warning(f'[AIHandler] Error normalizing parameter value: {e}')
+            return value
+    
+    def _extract_parameters_fallback(
+        self, 
+        user_input: str, 
+        tool_info: Dict[str, Any], 
+        context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Minimal fallback for parameter extraction when LLM is not available.
+        """
+        try:
+            params: Dict[str, Any] = {}
+            schema = tool_info.get('parameters_schema', {}) or {}
+            
+            # Include contesto se presente
+            if context:
+                params['context'] = context
+            
+            # Opzionale: lasciare traccia dell'input grezzo se previsto dallo schema
+            if 'user_input' in (schema.get('properties', {}) or {}):
+                params['user_input'] = user_input
+            
+            logging.debug(f'[AIHandler] Fallback params for {tool_info.get("name", "unknown")}: {params}')
+            return params
+        except Exception as e:
+            logging.error(f'[AIHandler] Error in fallback parameter extraction: {e}')
             return {}
-    
-    def _extract_destination(self, user_input: str) -> Optional[str]:
-        """
-        Extract destination from user input for navigation tools.
-        """
-        import re
-        patterns = [
-            r'(?:portami|andare|dirigere).*?(?:a |verso |per |in )([A-Z][a-zA-Z\s]+?)(?:\s|$|,)',
-            r'rotta.*?(?:per |verso |a )([A-Z][a-zA-Z\s]+?)(?:\s|$|,)',
-            r'(?:a |verso |per |in |su )?([A-Z][a-zA-Z\s]+?)(?:\s|$|,)'
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, user_input)
-            if match:
-                destination = match.group(1).strip()
-                if len(destination) > 2:
-                    return destination
-        return None
-    
-    def _extract_location(self, user_input: str) -> Optional[str]:
-        """
-        Extract location from user input for weather tools.
-        """
-        import re
-        patterns = [
-            r'meteo.*?(?:a |in |di )([A-Z][a-zA-Z\s]+?)(?:\s|$|,|\?)',
-            r'(?:a |in |su |per )([A-Z][a-zA-Z\s]+?)(?:\s|$|,|\?)'
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, user_input)
-            if match:
-                location = match.group(1).strip()
-                if len(location) > 2:
-                    return location
-        return None
     
     def _convert_tool_result_to_ai_response(
         self, 

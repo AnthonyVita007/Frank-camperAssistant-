@@ -80,6 +80,15 @@ class CommunicationHandler:
             """Handle AI provider toggle from the UI."""
             client_sid = getattr(request, 'sid', None)
             self._handle_ai_provider_toggle(json_data, client_sid)
+
+        #----------------------------------------------------------------
+        # REGISTRAZIONE: FRONTEND ACTIONS (es. cancel_tool)
+        #----------------------------------------------------------------
+        @self._socketio_instance.on('frontend_action')
+        def handle_frontend_action(json_data):
+            """Handle frontend actions like tool cancellation."""
+            client_sid = getattr(request, 'sid', None)
+            self._handle_frontend_action(json_data, client_sid)
     
     #----------------------------------------------------------------
     # INSTRADAMENTO RICHIESTE DAL FRONTEND
@@ -103,6 +112,16 @@ class CommunicationHandler:
                 return
             
             logging.info(f'[CommunicationHandler] Received input: "{user_input}"')
+            
+            # Check if this is a tool clarification continuation
+            session_id = sid or 'default'
+            if hasattr(self._ai_handler, 'has_pending_tool_session') and self._ai_handler.has_pending_tool_session(session_id):
+                logging.debug(f'[CommunicationHandler] Continuing tool clarification for session {session_id}')
+                
+                # Route to clarification handler
+                ai_response = self._ai_handler.continue_tool_clarification(session_id, user_input)
+                self._send_ai_response(ai_response, sid)
+                return
             
             # Comando o richiesta AI?
             if self._is_command(user_input):
@@ -242,6 +261,53 @@ class CommunicationHandler:
         except Exception as e:
             logging.error(f'[CommunicationHandler] Error handling AI provider toggle: {e}')
             self._send_error_response('Errore durante il cambio provider', sid)
+    
+    #----------------------------------------------------------------
+    # GESTIONE: FRONTEND ACTIONS (es. cancel_tool)
+    #----------------------------------------------------------------
+    def _handle_frontend_action(self, json_data: Optional[Dict[str, Any]], sid: Optional[str] = None) -> None:
+        """
+        Handle frontend actions like tool cancellation.
+        
+        Expected payload:
+          { "action": "cancel_tool" }
+        """
+        try:
+            # Validazione payload
+            if not json_data or not isinstance(json_data, dict):
+                logging.warning('[CommunicationHandler] Invalid payload for frontend_action')
+                self._send_error_response('Payload non valido per azione frontend', sid)
+                return
+            
+            action = json_data.get('action', '').strip()
+            if not action:
+                logging.warning('[CommunicationHandler] No action specified in frontend_action')
+                self._send_error_response('Nessuna azione specificata', sid)
+                return
+            
+            if action == 'cancel_tool':
+                # Handle tool cancellation
+                session_id = sid or 'default'
+                
+                if hasattr(self._ai_handler, 'has_pending_tool_session') and self._ai_handler.has_pending_tool_session(session_id):
+                    ai_response = self._ai_handler.cancel_tool_session(session_id)
+                    self._send_ai_response(ai_response, sid)
+                    logging.info(f'[CommunicationHandler] Tool session canceled for session {session_id}')
+                else:
+                    # No pending session - just send a confirmation
+                    ai_response = AIResponse(
+                        text="Nessuna operazione da annullare.",
+                        success=True,
+                        response_type="conversational"
+                    )
+                    self._send_ai_response(ai_response, sid)
+            else:
+                logging.warning(f'[CommunicationHandler] Unknown frontend action: {action}')
+                self._send_error_response(f'Azione non riconosciuta: {action}', sid)
+        
+        except Exception as e:
+            logging.error(f'[CommunicationHandler] Error handling frontend action: {e}')
+            self._send_error_response('Errore durante l\'esecuzione dell\'azione', sid)
     
     #----------------------------------------------------------------
     # UTILITÀ: ESTRARRE COMANDO
@@ -415,7 +481,7 @@ class CommunicationHandler:
             chunk_count = 0
             
             try:
-                for chunk in self._ai_handler.handle_ai_stream(user_input):
+                for chunk in self._ai_handler.handle_ai_stream(user_input, context={'session_id': sid}):
                     if chunk:
                         accumulated_text += chunk
                         chunk_count += 1
@@ -449,7 +515,7 @@ class CommunicationHandler:
                 # Fallback a non-streaming
                 try:
                     logging.info(f'[CommunicationHandler] Falling back to non-streaming for request {request_id}')
-                    ai_response = self._ai_handler.handle_ai_request(user_input)
+                    ai_response = self._ai_handler.handle_ai_request(user_input, context={'session_id': sid})
                     
                     # Invio risposta fallback
                     self._send_ai_response(ai_response, sid)

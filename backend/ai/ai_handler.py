@@ -685,7 +685,8 @@ class AIHandler:
         self._cleanup_tool_session(session_id, 'finished', status_value, f"Tool {session.tool_name} completed")
         
         # Format result message
-        if tool_result.success:
+        from backend.mcp.mcp_tool import ToolResultStatus
+        if tool_result.status == ToolResultStatus.SUCCESS:
             result_message = f"{tool_result.data}. [Modalità Tool disattivata: {session.tool_name} | session chiusa]"
             return AIResponse(
                 text=result_message,
@@ -1439,7 +1440,8 @@ class AIHandler:
         self._cleanup_tool_session(session_id, 'finished', status_value, f"Tool {session.tool_name} completed")
         
         # Format result message
-        if tool_result.success:
+        from backend.mcp.mcp_tool import ToolResultStatus
+        if tool_result.status == ToolResultStatus.SUCCESS:
             result_message = f"{prefix_message} [tool_ready_to_start → {session.tool_name}] [tool_started → {session.tool_name} | parameters: {session.parameters}] {tool_result.data} [tool_finished → {session.tool_name} | status: {status_value}] [Modalità Tool disattivata: {session.tool_name} | session chiusa]"
             return AIResponse(
                 text=result_message,
@@ -1595,21 +1597,29 @@ class AIHandler:
         params = {}
         user_lower = user_input.lower().strip()
         
+        # Skip extraction for obviously non-parameter inputs
+        question_indicators = ['come', 'cosa', 'chi', 'dove', 'quando', 'perché', 'stai', 'vai', 'fai']
+        if any(word in user_lower for word in question_indicators):
+            return params
+        
         # Simple pattern matching for common parameters
         if 'destination' in missing_params:
             # Extract destination from common patterns
             words = user_input.strip().split()
-            if words:
+            if words and len(words) <= 3:  # More restrictive
                 # If it's a single word or looks like a place name, use it as destination
                 if len(words) == 1 or any(word[0].isupper() for word in words):
-                    params['destination'] = user_input.strip()
+                    # Additional validation - check if it looks like a place name
+                    if not any(word.lower() in question_indicators for word in words):
+                        params['destination'] = user_input.strip()
         
         if 'location' in missing_params:
             # Similar to destination
             words = user_input.strip().split()
-            if words:
+            if words and len(words) <= 3:  # More restrictive
                 if len(words) == 1 or any(word[0].isupper() for word in words):
-                    params['location'] = user_input.strip()
+                    if not any(word.lower() in question_indicators for word in words):
+                        params['location'] = user_input.strip()
         
         # Check for toll/highway preferences
         if 'pedaggi' in user_lower or 'toll' in user_lower:

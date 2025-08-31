@@ -231,44 +231,102 @@ socket.on('backend_action', (payload) => {
         return;
     }
 
-    // New tool lifecycle events
+    // TOOL LIFECYCLE EVENTS WITH COMPREHENSIVE TRACKING
+    if (action === 'tool_lifecycle_started') {
+        const toolName = data.tool_name || 'unknown';
+        const state = data.state || 'unknown';
+        const sessionId = data.session_id || 'unknown';
+        currentToolName = toolName;
+        toolFlowState = state;
+        appendToolBubble(`🔧 Tool Lifecycle Started: ${toolName} | State: ${state} | Session: ${sessionId}`);
+        return;
+    }
+
     if (action === 'tool_selected') {
         const toolName = data.tool_name || 'unknown';
         currentToolName = toolName;
         toolFlowState = 'tool_detected';
-        appendToolBubble(`Tool selected → ${toolName}`);
+        appendToolBubble(`🧭 Tool selected → ${toolName}`);
         return;
     }
 
     if (action === 'tool_clarification') {
         isClarificationActive = true;
         toolFlowState = 'clarifying';
-        // Backend response will show the clarification question in a normal bubble
+        const missingParams = data.missing_required || [];
+        appendToolBubble(`❓ Tool clarification needed | Missing: ${missingParams.join(', ')}`);
+        return;
+    }
+
+    if (action === 'tool_parameter_received') {
+        const paramName = data.param_name || 'unknown';
+        const paramValue = data.param_value || 'unknown';
+        const stillMissing = data.missing_required || [];
+        appendToolBubble(`✅ Parameter received: ${paramName} = "${paramValue}" | Still missing: ${stillMissing.join(', ')}`);
+        return;
+    }
+
+    if (action === 'tool_gating_notice') {
+        const toolName = data.tool_name || 'unknown';
+        const state = data.state || 'unknown';
+        const missing = data.missing_required || [];
+        appendToolBubble(`🚫 Tool gating active: ${toolName} | State: ${state} | Accepts only: ${missing.join(', ')}`);
         return;
     }
 
     if (action === 'tool_ready_to_start') {
         toolFlowState = 'ready_to_start';
-        appendToolBubble('Starting Tool');
+        const toolName = data.tool_name || currentToolName || 'unknown';
+        appendToolBubble(`⏳ Tool ready to start: ${toolName}`);
         return;
     }
 
     if (action === 'tool_started') {
         toolFlowState = 'running';
-        // Optionally show a bubble or just update state
+        const toolName = data.tool_name || currentToolName || 'unknown';
+        const params = data.parameters ? JSON.stringify(data.parameters) : 'none';
+        appendToolBubble(`▶️ Tool started: ${toolName} | Parameters: ${params}`);
         return;
     }
 
     if (action === 'tool_finished') {
+        const toolName = data.tool_name || currentToolName || 'unknown';
+        const status = data.status || 'unknown';
+        const statusIcon = status === 'success' ? '✅' : status === 'error' ? '❌' : '🏁';
+        appendToolBubble(`🏁 Tool finished: ${toolName} | Status: ${status} ${statusIcon}`);
         toolFlowState = 'idle';
         currentToolName = null;
         isClarificationActive = false;
-        // Don't show a bubble for finish unless desired
         return;
     }
 
+    if (action === 'tool_session_canceled') {
+        const toolName = data.tool_name || currentToolName || 'unknown';
+        const reason = data.reason || 'unknown';
+        appendToolBubble(`🛑 Tool session canceled: ${toolName} | Reason: ${reason}`);
+        toolFlowState = 'canceled';
+        currentToolName = null;
+        isClarificationActive = false;
+        setTimeout(() => { 
+            toolFlowState = 'idle'; 
+        }, 100);
+        return;
+    }
+
+    if (action === 'tool_lifecycle_finished') {
+        const toolName = data.tool_name || currentToolName || 'unknown';
+        const finalState = data.final_state || 'unknown';
+        const status = data.status || 'unknown';
+        appendToolBubble(`🔚 Tool lifecycle finished: ${toolName} | Final state: ${finalState} | Status: ${status}`);
+        toolFlowState = 'idle';
+        currentToolName = null;
+        isClarificationActive = false;
+        return;
+    }
+
+    // Legacy tool events (kept for backward compatibility)
     if (action === 'tool_canceled') {
-        appendToolBubble('Closing Tool');
+        appendToolBubble('🛑 Tool canceled (legacy event)');
         toolFlowState = 'canceled';
         currentToolName = null;
         isClarificationActive = false;

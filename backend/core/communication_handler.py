@@ -95,10 +95,12 @@ class CommunicationHandler:
     #----------------------------------------------------------------
     def _handle_frontend_command(self, json_data: Optional[Dict[str, Any]], sid: Optional[str] = None) -> None:
         """
-        Handle a request received from the frontend.
+        Handle a request received from the frontend with rigorous tool session gating.
         
         This method processes both commands and AI requests sent by the frontend client,
         validates the input, routes to appropriate processor, and sends responses.
+        
+        During active tool sessions, ALL input is routed to tool handling except cancellation.
         
         Args:
             json_data (Optional[Dict[str, Any]]): The JSON data received from frontend
@@ -113,16 +115,18 @@ class CommunicationHandler:
             
             logging.info(f'[CommunicationHandler] Received input: "{user_input}"')
             
-            # Check if this is a tool clarification continuation
+            # RIGOROUS GATING: Check if there's an active tool session
             session_id = sid or 'default'
-            if hasattr(self._ai_handler, 'has_pending_tool_session') and self._ai_handler.has_pending_tool_session(session_id):
-                logging.debug(f'[CommunicationHandler] Continuing tool clarification for session {session_id}')
+            if hasattr(self._ai_handler, 'is_tool_session_active') and self._ai_handler.is_tool_session_active(session_id):
+                logging.debug(f'[CommunicationHandler] Active tool session detected for {session_id} - routing to tool handler')
                 
-                # Route to clarification handler
+                # During active tool session, ALL input goes to clarification handler
+                # The clarification handler will determine if it's relevant or needs gating
                 ai_response = self._ai_handler.continue_tool_clarification(session_id, user_input)
                 self._send_ai_response(ai_response, sid)
                 return
             
+            # No active tool session - normal processing
             # Comando o richiesta AI?
             if self._is_command(user_input):
                 # Processo come comando

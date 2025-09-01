@@ -17,6 +17,7 @@ from .ai_processor import AIProcessor  # Il processor (può essere single-provid
 from .ai_response import AIResponse
 from .llm_intent_detector import LLMIntentDetector, IntentDetectionResult
 from .intent_prompts import get_clarification_prompt
+from .tool_lifecycle_agent import ToolLifecycleAgent
 
 # Import opzionale dell'Enum AIProvider (presente solo se l'AIProcessor è dual-provider)
 try:
@@ -75,6 +76,9 @@ class AIHandler:
     MCP (Model Context Protocol) integration for tool-based interactions and advanced
     LLM-based intent recognition with pattern matching fallback.
     
+    The AIHandler now delegates tool lifecycle management to the ToolLifecycleAgent
+    while maintaining the same external interface for backward compatibility.
+    
     Parameter extraction for tools is handled entirely by the LLM system when available,
     with a minimal non-intrusive fallback for when LLM is disabled.
     
@@ -85,6 +89,8 @@ class AIHandler:
         _tool_detection_enabled (bool): Whether to detect tool usage intents
         _llm_intent_detector (Optional[LLMIntentDetector]): LLM-based intent detector
         _llm_intent_enabled (bool): Whether LLM intent detection is enabled
+        _tool_lifecycle_agent (ToolLifecycleAgent): Agent managing tool lifecycles
+        _active_delegations (Dict[str, bool]): Per-session delegation tracking
     """
     
 #----------------------------------------------------------------
@@ -154,6 +160,20 @@ class AIHandler:
             
             # Backward compatibility
             self._pending_sessions: Dict[str, ToolSessionState] = self._tool_sessions
+            
+            #----------------------------------------------------------------
+            # DELEGATION SYSTEM AND TOOL LIFECYCLE AGENT
+            #----------------------------------------------------------------
+            # Delegation tracking per session_id
+            self._active_delegations: Dict[str, bool] = {}
+            
+            # Initialize ToolLifecycleAgent
+            self._tool_lifecycle_agent = ToolLifecycleAgent(
+                ai_processor=self._ai_processor,
+                mcp_handler=self._mcp_handler,
+                event_emitter=self._event_emitter if self._event_emitter else lambda action, data: None,
+                on_complete=self._on_tool_lifecycle_complete
+            )
             
             #----------------------------------------------------------------
             # LOG DI STATO
@@ -370,6 +390,78 @@ class AIHandler:
             )
     
     #----------------------------------------------------------------
+    # DELEGATION SYSTEM METHODS
+    #----------------------------------------------------------------
+    def has_active_delegation(self, session_id: str) -> bool:
+        """
+        Check if there's an active delegation for the given session ID.
+        
+        Args:
+            session_id (str): Session identifier
+            
+        Returns:
+            bool: True if delegation is active, False otherwise
+        """
+        return self._active_delegations.get(session_id, False)
+    
+    def route_user_message(self, session_id: str, text: str) -> AIResponse:
+        """
+        Route user message to the appropriate handler based on delegation state.
+        
+        Args:
+            session_id (str): Session identifier
+            text (str): User input text
+            
+        Returns:
+            AIResponse: Response from the appropriate handler
+        """
+        try:
+            # Check if there's an active delegation for this session
+            if self.has_active_delegation(session_id):
+                logging.debug(f'[AIHandler] Routing message to ToolLifecycleAgent for session {session_id}')
+                return self._tool_lifecycle_agent.handle_user_message(session_id, text)
+            else:
+                logging.debug(f'[AIHandler] Routing message to main LLM for session {session_id}')
+                # Route to main LLM processing with session context
+                context = {'session_id': session_id}
+                return self.handle_ai_request(text, context)
+                
+        except Exception as e:
+            logging.error(f'[AIHandler] Error routing user message: {e}')
+            return AIResponse(
+                text="Errore nel routing del messaggio.",
+                success=False,
+                response_type="error"
+            )
+    
+    def _on_tool_lifecycle_complete(self, session_id: str, outcome: Dict[str, Any]) -> None:
+        """
+        Callback when tool lifecycle completes (success, error, or cancellation).
+        
+        Args:
+            session_id (str): Session identifier
+            outcome (Dict[str, Any]): Outcome information
+        """
+        try:
+            logging.info(f'[AIHandler] Tool lifecycle completed for session {session_id}: {outcome.get("outcome", "unknown")}')
+            
+            # Emit delegation_agent_to_main event
+            if self._event_emitter:
+                self._event_emitter('delegation_agent_to_main', {
+                    'from': 'ToolLifecycleAgent',
+                    'to': 'LLM principale',
+                    'session_id': session_id
+                })
+            
+            # Release delegation
+            self._active_delegations[session_id] = False
+            
+            logging.debug(f'[AIHandler] Released delegation for session {session_id}')
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error in tool lifecycle completion callback: {e}')
+    
+    #----------------------------------------------------------------
     # RILEVAMENTO INTENTI PER STRUMENTI MCP (IBRIDO)
     #----------------------------------------------------------------
     def _detect_tool_intent_pattern_matching(
@@ -533,8 +625,8 @@ class AIHandler:
         context: Optional[Dict[str, Any]] = None
     ) -> AIResponse:
         """
-        Handle a request that requires tool execution with rigorous lifecycle management.
-        Creates tool session at detection time and emits comprehensive lifecycle events.
+        Handle a request that requires tool execution by delegating to ToolLifecycleAgent.
+        This maintains the same interface but now uses delegation instead of direct handling.
         """
         try:
             # Extract session_id from context
@@ -543,11 +635,24 @@ class AIHandler:
                 logging.warning('[AIHandler] No session_id in context for tool request')
                 return self._fallback_to_conversation(user_input, "Errore: ID sessione mancante")
             
+            # Check if delegation is already active for this session
+            if self.has_active_delegation(session_id):
+                logging.warning(f'[AIHandler] Tool delegation already active for session {session_id}')
+                return AIResponse(
+                    text="È già in corso un'operazione con tool. Vuoi annullarla?",
+                    success=True,
+                    response_type="tool_conflict"
+                )
+            
             #----------------------------------------------------------------
             # IDENTIFICAZIONE CATEGORIA E SELEZIONE TOOL
             #----------------------------------------------------------------
             primary_category = tool_intent.get('primary_category')
             logging.info(f'[AIHandler] Processing tool request for category: {primary_category}')
+            
+            if not self._mcp_handler:
+                logging.error('[AIHandler] MCP handler not available for tool request')
+                return self._fallback_to_conversation(user_input, "Sistema tool non disponibile")
             
             available_tools = self._mcp_handler.get_tools_by_category(primary_category)
             if not available_tools:
@@ -557,24 +662,73 @@ class AIHandler:
             # Select the first available tool (in a real implementation, you might want more sophisticated selection)
             selected_tool = available_tools[0]
             tool_name = selected_tool.get('name')
-            if not tool_name:
-                logging.error(f'[AIHandler] Invalid tool info: {selected_tool}')
-                return self._fallback_to_conversation(user_input, "Informazioni strumento non valide")
+            tool_info = selected_tool
             
-            # Emit tool selected event
-            self._emit_backend_action('tool_selected', {'tool_name': tool_name})
+            logging.info(f'[AIHandler] Selected tool: {tool_name}')
             
             #----------------------------------------------------------------
-            # ESTRAZIONE PARAMETRI (LLM + fallback) E VALUTAZIONE READY
+            # EXTRACT INITIAL PARAMETERS FROM LLM OR PATTERN MATCHING
             #----------------------------------------------------------------
-            parameters = self._extract_tool_parameters(user_input, tool_name, selected_tool, context)
+            initial_params = {}
+            try:
+                # Try LLM parameter extraction first
+                if self._llm_intent_enabled and self._llm_intent_detector:
+                    initial_params = self._llm_intent_detector.extract_parameters(
+                        user_input=user_input,
+                        tool_name=tool_name,
+                        tool_schema=tool_info.get('parameters_schema', {}),
+                        context=context
+                    )
+                
+                # Fallback to pattern matching if LLM extraction didn't work
+                if not initial_params:
+                    schema = tool_info.get('parameters_schema', {})
+                    required_params = schema.get('required', [])
+                    initial_params = self._extract_tool_parameters(user_input, required_params, tool_name)
+                
+                # Normalize parameters
+                initial_params = self._normalize_parameters(initial_params, tool_name)
+                
+            except Exception as e:
+                logging.error(f'[AIHandler] Error extracting initial parameters: {e}')
+                initial_params = {}
             
-            # Normalize parameters (e.g., preferences for navigation)
-            parameters = self._normalize_parameters(parameters, tool_name)
+            #----------------------------------------------------------------
+            # DELEGATE TO TOOL LIFECYCLE AGENT
+            #----------------------------------------------------------------
+            # Emit delegation event
+            if self._event_emitter:
+                self._event_emitter('delegation_main_to_agent', {
+                    'from': 'LLM principale',
+                    'to': 'ToolLifecycleAgent',
+                    'session_id': session_id
+                })
             
-            # Check required parameters
-            required_params = selected_tool.get('parameters_schema', {}).get('required', [])
-            missing_required = [param for param in required_params if param not in parameters or not parameters[param]]
+            # Set delegation flag
+            self._active_delegations[session_id] = True
+            
+            # Start tool lifecycle via agent
+            agent_response = self._tool_lifecycle_agent.start(session_id, tool_name, tool_info, initial_params)
+            
+            logging.info(f'[AIHandler] Delegated tool {tool_name} to ToolLifecycleAgent for session {session_id}')
+            
+            # Return either the agent response (if immediate execution) or a delegation message
+            if agent_response:
+                return agent_response
+            else:
+                return AIResponse(
+                    text=f"Ho avviato il tool {tool_name}. Il sistema procederà con la raccolta parametri se necessario.",
+                    success=True,
+                    response_type="tool_delegation"
+                )
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error in tool request delegation: {e}')
+            # Clean up delegation state on error
+            if session_id:
+                self._active_delegations[session_id] = False
+            
+            return self._fallback_to_conversation(user_input, f"Errore nella gestione del tool: {str(e)}")
             
             logging.info(f'[AIHandler] Tool {tool_name} parameters: {parameters}, missing: {missing_required}')
             
@@ -1740,6 +1894,7 @@ class AIHandler:
     def is_tool_session_active(self, session_id: str) -> bool:
         """
         Check if there's an active tool session for the given session ID.
+        Now checks both delegation system and legacy tool sessions.
         
         Args:
             session_id (str): Session identifier
@@ -1747,6 +1902,11 @@ class AIHandler:
         Returns:
             bool: True if tool session is active, False otherwise
         """
+        # Check delegation system first (new approach)
+        if self.has_active_delegation(session_id):
+            return self._tool_lifecycle_agent.is_active(session_id)
+        
+        # Fallback to legacy tool sessions for backward compatibility
         if session_id not in self._tool_sessions:
             return False
         

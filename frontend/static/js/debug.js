@@ -106,6 +106,58 @@ function appendToolBubble(message) {
 }
 
 //----------------------------------------------------------------
+// DELEGATION BUBBLE HELPER (RED BUBBLES)
+//----------------------------------------------------------------
+function appendDelegationBubble(message, delegationType) {
+    //----------------------------------------------------------------
+    // CREAZIONE WRAPPER CHAT E BOLLA DELEGATION
+    //----------------------------------------------------------------
+    const wrapper = document.createElement('div');
+    wrapper.className = 'chat';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble bubble-delegation bubble-delegation-enter bubble-delegation-pulse-once';
+    bubble.setAttribute('role', 'status');
+    bubble.setAttribute('aria-live', 'polite');
+    
+    // Add specific class for delegation type
+    if (delegationType === 'main-to-agent') {
+        bubble.classList.add('bubble-delegation-main-to-agent');
+    } else if (delegationType === 'agent-to-main') {
+        bubble.classList.add('bubble-delegation-agent-to-main');
+    }
+    
+    // Support for bold system names in messages like "[LLM principale] → passa i comandi a → [ToolLifecycleAgent]"
+    if (message.includes('→')) {
+        const parts = message.split('→');
+        if (parts.length === 3) {
+            const fromSystem = parts[0].trim();
+            const toSystem = parts[2].trim();
+            const middlePart = parts[1].trim();
+            bubble.innerHTML = `<strong>${fromSystem}</strong> → ${middlePart} → <strong>${toSystem}</strong>`;
+        } else if (parts.length === 2) {
+            const beforeArrow = parts[0].trim();
+            const afterArrow = parts[1].trim();
+            bubble.innerHTML = `<strong>${beforeArrow}</strong> → <strong>${afterArrow}</strong>`;
+        } else {
+            bubble.textContent = message;
+        }
+    } else {
+        bubble.textContent = message;
+    }
+
+    wrapper.appendChild(bubble);
+    logContainer.appendChild(wrapper);
+
+    //----------------------------------------------------------------
+    // AUTOSCROLL E RITORNO RIFERIMENTO ALLA BOLLA
+    //----------------------------------------------------------------
+    logContainer.scrollTop = logContainer.scrollHeight;
+
+    return bubble;
+}
+
+//----------------------------------------------------------------
 // helper: pulisci tutto il log
 //----------------------------------------------------------------
 function clearLog() {
@@ -228,6 +280,25 @@ socket.on('backend_action', (payload) => {
             setSwitchUI(actualProvider);
             appendLog(`UI aggiornata per provider: ${actualProvider === 'gemini' ? 'CLOUD (Gemini)' : 'LOCAL (llama.cpp)'}`, 'system');
         }
+        return;
+    }
+
+    // DELEGATION EVENTS (RED BUBBLES)
+    if (action === 'delegation_main_to_agent') {
+        const fromSystem = data.from || 'LLM principale';
+        const toSystem = data.to || 'ToolLifecycleAgent';
+        const sessionId = data.session_id || 'unknown';
+        
+        appendDelegationBubble(`${fromSystem} → passa i comandi a → ${toSystem}`, 'main-to-agent');
+        return;
+    }
+
+    if (action === 'delegation_agent_to_main') {
+        const fromSystem = data.from || 'ToolLifecycleAgent';
+        const toSystem = data.to || 'LLM principale';
+        const sessionId = data.session_id || 'unknown';
+        
+        appendDelegationBubble(`${fromSystem} → passa i comandi a → ${toSystem}`, 'agent-to-main');
         return;
     }
 

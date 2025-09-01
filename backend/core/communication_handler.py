@@ -115,14 +115,18 @@ class CommunicationHandler:
             
             logging.info(f'[CommunicationHandler] Received input: "{user_input}"')
             
-            # RIGOROUS GATING: Check if there's an active tool session
+            # RIGOROUS GATING: Check if there's an active tool session via delegation or legacy
             session_id = sid or 'default'
             if hasattr(self._ai_handler, 'is_tool_session_active') and self._ai_handler.is_tool_session_active(session_id):
-                logging.debug(f'[CommunicationHandler] Active tool session detected for {session_id} - routing to tool handler')
+                logging.debug(f'[CommunicationHandler] Active tool session detected for {session_id} - routing via delegation system')
                 
-                # During active tool session, ALL input goes to clarification handler
-                # The clarification handler will determine if it's relevant or needs gating
-                ai_response = self._ai_handler.continue_tool_clarification(session_id, user_input)
+                # Use the new routing system that handles both delegation and legacy
+                if hasattr(self._ai_handler, 'route_user_message'):
+                    ai_response = self._ai_handler.route_user_message(session_id, user_input)
+                else:
+                    # Fallback to legacy method
+                    ai_response = self._ai_handler.continue_tool_clarification(session_id, user_input)
+                
                 self._send_ai_response(ai_response, sid)
                 return
             
@@ -290,13 +294,25 @@ class CommunicationHandler:
                 return
             
             if action == 'cancel_tool':
-                # Handle tool cancellation
+                # Handle tool cancellation - check delegation system first
                 session_id = sid or 'default'
                 
-                if hasattr(self._ai_handler, 'has_pending_tool_session') and self._ai_handler.has_pending_tool_session(session_id):
+                # Check if there's an active delegation
+                if hasattr(self._ai_handler, 'has_active_delegation') and self._ai_handler.has_active_delegation(session_id):
+                    # Cancel via ToolLifecycleAgent
+                    if hasattr(self._ai_handler, '_tool_lifecycle_agent'):
+                        ai_response = self._ai_handler._tool_lifecycle_agent.cancel(session_id, "frontend_action")
+                        self._send_ai_response(ai_response, sid)
+                        logging.info(f'[CommunicationHandler] Tool lifecycle canceled via delegation for session {session_id}')
+                    else:
+                        logging.error('[CommunicationHandler] ToolLifecycleAgent not available for cancellation')
+                        self._send_error_response('Sistema di cancellazione tool non disponibile', sid)
+                
+                # Fallback to legacy system
+                elif hasattr(self._ai_handler, 'has_pending_tool_session') and self._ai_handler.has_pending_tool_session(session_id):
                     ai_response = self._ai_handler.cancel_tool_session(session_id)
                     self._send_ai_response(ai_response, sid)
-                    logging.info(f'[CommunicationHandler] Tool session canceled for session {session_id}')
+                    logging.info(f'[CommunicationHandler] Legacy tool session canceled for session {session_id}')
                 else:
                     # No pending session - just send a confirmation
                     ai_response = AIResponse(

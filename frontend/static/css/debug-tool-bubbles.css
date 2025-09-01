@@ -28,6 +28,91 @@ TOOL BUBBLE BASE STYLES
 }
 
 /*----------------------------------------------------------------
+DELEGATION BUBBLE STYLES (RED)
+----------------------------------------------------------------*/
+.bubble-delegation {
+  max-width: 80ch;
+  padding: 12px 16px;
+  border-radius: 12px;
+  line-height: 1.6;
+  font-family: var(--console-font);
+  font-size: inherit;
+  word-wrap: break-word;
+  
+  /* Red styling for delegation events */
+  background: #a30000; /* Dark red background */
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 77, 77, 0.3);
+  box-shadow:
+    0 0 10px rgba(163, 0, 0, 0.4),
+    inset 0 0 12px rgba(255, 255, 255, 0.1);
+  
+  /* Ensure proper contrast and accessibility */
+  text-shadow: none; /* Remove any inherited text shadows for better readability */
+  
+  /* Alignment and positioning */
+  margin-left: 0;
+  margin-right: auto; /* Align with backend bubbles (left side) */
+}
+
+/*----------------------------------------------------------------
+DELEGATION BUBBLE ANIMATIONS
+----------------------------------------------------------------*/
+@keyframes bubble-delegation-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bubble-delegation-pulse-once {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/*----------------------------------------------------------------
+DELEGATION ANIMATION CLASSES
+----------------------------------------------------------------*/
+.bubble-delegation-enter {
+  animation: bubble-delegation-enter 220ms ease-out forwards;
+}
+
+.bubble-delegation-pulse-once {
+  animation: bubble-delegation-pulse-once 180ms ease-in-out forwards;
+  animation-delay: 220ms; /* After enter animation completes */
+}
+
+/*----------------------------------------------------------------
+DELEGATION BUBBLE BOLD TEXT STYLING
+----------------------------------------------------------------*/
+.bubble-delegation strong {
+  font-weight: bold;
+  color: #ffdddd; /* Slightly lighter red for better contrast */
+}
+
+/*----------------------------------------------------------------
+DELEGATION BUBBLE SPECIFIC TYPES
+----------------------------------------------------------------*/
+.bubble-delegation-main-to-agent {
+  border-left: 4px solid #ff4d4d; /* Accent border for main-to-agent */
+}
+
+.bubble-delegation-agent-to-main {
+  border-left: 4px solid #ff8080; /* Slightly different accent for agent-to-main */
+}
+
+/*----------------------------------------------------------------
 ANIMATIONS
 ----------------------------------------------------------------*/
 @keyframes bubble-tool-enter {
@@ -90,6 +175,12 @@ RESPONSIVE ADJUSTMENTS
     padding: 10px 14px;
     font-size: 18px;
   }
+  
+  .bubble-delegation {
+    max-width: 90vw;
+    padding: 10px 14px;
+    font-size: 18px;
+  }
 }
 
 /*----------------------------------------------------------------
@@ -97,6 +188,12 @@ HIGH CONTRAST MODE SUPPORT
 ----------------------------------------------------------------*/
 @media (prefers-contrast: high) {
   .bubble-tool {
+    border-width: 2px;
+    border-color: #FFFFFF;
+    box-shadow: none;
+  }
+  
+  .bubble-delegation {
     border-width: 2px;
     border-color: #FFFFFF;
     box-shadow: none;
@@ -114,6 +211,17 @@ REDUCED MOTION SUPPORT
   }
   
   .bubble-tool-pulse-once {
+    animation: none;
+    transform: scale(1);
+  }
+  
+  .bubble-delegation-enter {
+    animation: none;
+    opacity: 1;
+    transform: translateY(0);
+  }
+  
+  .bubble-delegation-pulse-once {
     animation: none;
     transform: scale(1);
   }

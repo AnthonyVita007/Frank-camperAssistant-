@@ -42,14 +42,14 @@ class AIProcessor:
         _gemini_available (bool): Whether Gemini API is available
     """
     
-    #----------------------------------------------------------------
-    # INIZIALIZZAZIONE E CONFIGURAZIONE DUAL-AI
-    #----------------------------------------------------------------
+#----------------------------------------------------------------
+# INIZIALIZZAZIONE E CONFIGURAZIONE DUAL-AI
+#----------------------------------------------------------------
     def __init__(
         self,
         provider: AIProvider = AIProvider.LOCAL,
         llamacpp_url: str = "http://127.0.0.1:8080/completion",
-        llamacpp_model: str = "phi3:mini",
+        llamacpp_model: str = "gemma_3_270M",
         gemini_api_key: Optional[str] = None,
         max_retries: int = 3,
         timeout: float = 60.0

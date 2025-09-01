@@ -1359,7 +1359,13 @@ class AIHandler:
                 session.last_question = question
                 
                 # Format response with updated missing list
-                param_received_msg = f'Parametro ricevuto: {", ".join([f"{k} = \"{v}\"" for k, v in relevant_params.items()])}. [Parametri richiesti aggiornati: {", ".join(session.missing)}]'
+                pairs = ", ".join([f'{k} = "{v}"' for k, v in relevant_params.items()])
+                missing_list = ", ".join(session.missing)
+
+                param_received_msg = (
+                    f'Parametro ricevuto: {pairs}. '
+                    f'[Parametri richiesti aggiornati: {missing_list}]'
+                )
                 if session.missing:
                     param_received_msg += f" {question}"
                 
@@ -1374,7 +1380,8 @@ class AIHandler:
             logging.info(f'[AIHandler] All parameters collected for {session.tool_name}: {session.parameters}')
             
             # Notify parameters complete and execute directly
-            param_complete_msg = f'Parametro ricevuto: {", ".join([f"{k} = \"{v}\"" for k, v in relevant_params.items()])}. [Parametri richiesti completi]'
+            pairs = ", ".join([f'{k} = "{v}"' for k, v in relevant_params.items()])
+            param_complete_msg = f'Parametro ricevuto: {pairs}. [Parametri richiesti completi]'
             
             # Execute tool directly
             return self._execute_tool_from_session(session_id, param_complete_msg)

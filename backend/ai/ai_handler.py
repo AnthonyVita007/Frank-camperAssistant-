@@ -26,26 +26,44 @@ except Exception:
 
 
 #----------------------------------------------------------------
-# PENDING TOOL SESSION DATA STRUCTURE
+# TOOL SESSION DATA STRUCTURE (COMPREHENSIVE LIFECYCLE)
 #----------------------------------------------------------------
 @dataclass
-class PendingToolSession:
+class ToolSessionState:
     """
-    Data structure for tracking tool clarification sessions.
+    Data structure for tracking comprehensive tool session lifecycle.
+    States: detected → clarifying → ready_to_start → running → finished/canceled
     """
+    # Tool identification
     tool_name: str
     tool_info: Dict[str, Any]
     schema: Dict[str, Any]
+    
+    # Session state
+    state: str  # "detected" | "clarifying" | "ready_to_start" | "running" | "finished" | "canceled"
+    active: bool
+    
+    # Parameters
     required: List[str]
     parameters: Dict[str, Any]
     missing: List[str]
+    
+    # Clarification tracking
     last_question: Optional[str]
     asked_count: int
+    
+    # Lifecycle tracking
+    started_at: float
     created_at: float
     
     def __post_init__(self):
         if self.created_at is None:
             self.created_at = time.time()
+        if self.started_at is None:
+            self.started_at = time.time()
+
+# Backward compatibility alias
+PendingToolSession = ToolSessionState
 
 
 class AIHandler:
@@ -130,9 +148,12 @@ class AIHandler:
                         self._llm_intent_detector = None
             
             #----------------------------------------------------------------
-            # TOOL CLARIFICATION SESSIONS STORAGE
+            # TOOL SESSION LIFECYCLE MANAGEMENT
             #----------------------------------------------------------------
-            self._pending_sessions: Dict[str, PendingToolSession] = {}
+            self._tool_sessions: Dict[str, ToolSessionState] = {}
+            
+            # Backward compatibility
+            self._pending_sessions: Dict[str, ToolSessionState] = self._tool_sessions
             
             #----------------------------------------------------------------
             # LOG DI STATO
@@ -512,14 +533,16 @@ class AIHandler:
         context: Optional[Dict[str, Any]] = None
     ) -> AIResponse:
         """
-        Handle a request that requires tool execution.
-        Ora emette eventi 'backend_action' per mostrare le bubble blu in Debug:
-        - tool_selected
-        - tool_ready_to_start
-        - tool_started
-        - tool_finished
+        Handle a request that requires tool execution with rigorous lifecycle management.
+        Creates tool session at detection time and emits comprehensive lifecycle events.
         """
         try:
+            # Extract session_id from context
+            session_id = context.get('session_id') if context else None
+            if not session_id:
+                logging.warning('[AIHandler] No session_id in context for tool request')
+                return self._fallback_to_conversation(user_input, "Errore: ID sessione mancante")
+            
             #----------------------------------------------------------------
             # IDENTIFICAZIONE CATEGORIA E SELEZIONE TOOL
             #----------------------------------------------------------------
@@ -531,87 +554,152 @@ class AIHandler:
                 logging.warning(f'[AIHandler] No tools available for category: {primary_category}')
                 return self._fallback_to_conversation(user_input, f"Categoria strumenti '{primary_category}' non disponibile")
             
+            # Select the first available tool (in a real implementation, you might want more sophisticated selection)
             selected_tool = available_tools[0]
             tool_name = selected_tool.get('name')
             if not tool_name:
                 logging.error(f'[AIHandler] Invalid tool info: {selected_tool}')
                 return self._fallback_to_conversation(user_input, "Informazioni strumento non valide")
             
-            # Notifica selezione tool (bubble blu "Tool selected → <tool>")
+            # Emit tool selected event
             self._emit_backend_action('tool_selected', {'tool_name': tool_name})
             
             #----------------------------------------------------------------
-            # ESTRAZIONE PARAMETRI (LLM + fallback) E VALUTAZIONE "READY"
+            # ESTRAZIONE PARAMETRI (LLM + fallback) E VALUTAZIONE READY
             #----------------------------------------------------------------
             parameters = self._extract_tool_parameters(user_input, tool_name, selected_tool, context)
             
             # Normalize parameters (e.g., preferences for navigation)
             parameters = self._normalize_parameters(parameters, tool_name)
             
-            schema = (selected_tool.get('parameters_schema') or {})
-            required = (schema.get('required') or [])
-            missing = [r for r in required if not self._is_parameter_present(r, parameters)]
+            # Check required parameters
+            required_params = selected_tool.get('parameters_schema', {}).get('required', [])
+            missing_required = [param for param in required_params if param not in parameters or not parameters[param]]
             
-            if missing:
-                # Missing required parameters - start clarification cycle
-                logging.debug(f"[AIHandler] Missing required parameters for {tool_name}: {missing}")
-                
-                # We need a session_id to track the clarification session
-                # For now, use a simple approach - this will be improved when we integrate with CommunicationHandler
-                session_id = context.get('session_id', 'default') if context else 'default'
-                
-                # Start clarification session
-                self.start_tool_clarification(session_id, tool_name, selected_tool, parameters, missing)
-                
-                # Emit tool_clarification event
-                self._emit_backend_action('tool_clarification', {
-                    'tool_name': tool_name, 
-                    'missing_parameters': missing
-                })
-                
-                # Generate first clarification question
-                pending_session = self._pending_sessions[session_id]
-                question = self._generate_clarification_question(pending_session)
-                pending_session.last_question = question
-                pending_session.asked_count = 1
-                
-                return AIResponse(
-                    text=question,
-                    success=True,
-                    response_type="clarification",
-                    metadata={"clarifying": True, "missing": missing}
-                )
-            
-            # All required parameters present - proceed with execution
-            # Notifica che i parametri sono completi (bubble blu "Starting Tool")
-            self._emit_backend_action('tool_ready_to_start', {'tool_name': tool_name})
+            logging.info(f'[AIHandler] Tool {tool_name} parameters: {parameters}, missing: {missing_required}')
             
             #----------------------------------------------------------------
-            # ESECUZIONE TOOL CON NOTIFICHE CICLO DI VITA
+            # CREATE TOOL SESSION (ALWAYS, REGARDLESS OF MISSING PARAMS)
             #----------------------------------------------------------------
-            logging.info(f'[AIHandler] Executing tool "{tool_name}" with parameters: {parameters}')
-            
-            # Notifica avvio tool
-            self._emit_backend_action('tool_started', {'tool_name': tool_name, 'parameters': parameters})
-            
-            # Esecuzione del tool tramite MCP
-            tool_result = self._mcp_handler.execute_tool(tool_name, parameters)
-            
-            # Notifica completamento tool con stato
-            try:
-                status_value = getattr(tool_result.status, 'value', str(tool_result.status))
-            except Exception:
-                status_value = 'unknown'
-            self._emit_backend_action('tool_finished', {'tool_name': tool_name, 'status': status_value})
+            self._create_tool_session(session_id, tool_name, selected_tool, parameters, missing_required)
             
             #----------------------------------------------------------------
-            # CONVERSIONE RISULTATO TOOL → AIResponse
+            # BRANCH: CLARIFICATION vs EXECUTION
             #----------------------------------------------------------------
-            return self._convert_tool_result_to_ai_response(tool_result, tool_name, user_input)
-        
+            if missing_required:
+                # Start clarification process
+                return self._start_tool_clarification(session_id, user_input)
+            else:
+                # Ready to execute immediately
+                return self._execute_tool_directly(session_id)
+                
         except Exception as e:
             logging.error(f'[AIHandler] Error handling tool request: {e}')
-            return self._fallback_to_conversation(user_input, f"Errore nell'esecuzione dello strumento: {str(e)}")
+            return self._fallback_to_conversation(user_input, f"Errore nell'elaborazione della richiesta strumento: {str(e)}")
+    
+    def _start_tool_clarification(self, session_id: str, user_input: str) -> AIResponse:
+        """
+        Start the clarification process for missing parameters.
+        """
+        if session_id not in self._tool_sessions:
+            return AIResponse(
+                text="Errore: sessione tool non trovata.",
+                success=False,
+                response_type="error"
+            )
+        
+        session = self._tool_sessions[session_id]
+        
+        # Generate clarification question
+        question = self._generate_clarification_question(session)
+        session.last_question = question
+        session.asked_count += 1
+        
+        # Emit clarification event
+        self._emit_backend_action('tool_clarification', {
+            'session_id': session_id,
+            'tool_name': session.tool_name,
+            'missing_required': session.missing,
+            'question': question
+        })
+        
+        # Format the response with gating information
+        formatted_message = (
+            f"Ho rilevato che la tua richiesta richiede l'uso dello strumento: {session.tool_name}. "
+            f"[Modalità Tool attiva: {session.tool_name} | stato: {session.state} | session_id={session_id}] "
+            f"Per avviare {session.tool_name.lower()} ho bisogno di questi parametri obbligatori: {', '.join(session.missing)}. "
+            f"{question}"
+        )
+        
+        return AIResponse(
+            text=formatted_message,
+            success=True,
+            response_type="tool_clarification"
+        )
+    
+    def _execute_tool_directly(self, session_id: str) -> AIResponse:
+        """
+        Execute tool directly when all parameters are available.
+        """
+        if session_id not in self._tool_sessions:
+            return AIResponse(
+                text="Errore: sessione tool non trovata.",
+                success=False,
+                response_type="error"
+            )
+        
+        session = self._tool_sessions[session_id]
+        
+        # Update session state to ready_to_start
+        self._update_tool_session_state(session_id, 'ready_to_start')
+        self._emit_backend_action('tool_ready_to_start', {
+            'session_id': session_id,
+            'tool_name': session.tool_name
+        })
+        
+        # Update session state to running
+        self._update_tool_session_state(session_id, 'running')
+        self._emit_backend_action('tool_started', {
+            'session_id': session_id,
+            'tool_name': session.tool_name, 
+            'parameters': session.parameters
+        })
+        
+        # Execute the tool
+        logging.info(f'[AIHandler] Executing tool "{session.tool_name}" with parameters: {session.parameters}')
+        tool_result = self._mcp_handler.execute_tool(session.tool_name, session.parameters)
+        
+        # Emit completion event
+        try:
+            status_value = getattr(tool_result.status, 'value', str(tool_result.status))
+        except Exception:
+            status_value = 'unknown'
+        
+        self._emit_backend_action('tool_finished', {
+            'session_id': session_id,
+            'tool_name': session.tool_name, 
+            'status': status_value
+        })
+        
+        # Clean up session
+        self._cleanup_tool_session(session_id, 'finished', status_value, f"Tool {session.tool_name} completed")
+        
+        # Format result message
+        from backend.mcp.mcp_tool import ToolResultStatus
+        if tool_result.status == ToolResultStatus.SUCCESS:
+            result_message = f"{tool_result.data}. [Modalità Tool disattivata: {session.tool_name} | session chiusa]"
+            return AIResponse(
+                text=result_message,
+                success=True,
+                response_type="tool_execution"
+            )
+        else:
+            error_message = f"Errore nell'esecuzione di {session.tool_name}: {tool_result.data}"
+            return AIResponse(
+                text=error_message,
+                success=False,
+                response_type="error"
+            )
         
     def _extract_tool_parameters(
         self, 
@@ -1111,15 +1199,16 @@ class AIHandler:
     
     def has_pending_tool_session(self, session_id: str) -> bool:
         """
-        Check if there's a pending tool clarification session for the given session ID.
+        Check if there's an active tool session (not just clarification) for the given session ID.
+        Updated to work with the new comprehensive tool session management.
         
         Args:
             session_id (str): Session identifier
             
         Returns:
-            bool: True if there's a pending session
+            bool: True if there's an active tool session, False otherwise
         """
-        return session_id in self._pending_sessions
+        return self.is_tool_session_active(session_id)
     
     def start_tool_clarification(
         self, 
@@ -1163,25 +1252,31 @@ class AIHandler:
     
     def continue_tool_clarification(self, session_id: str, user_input: str) -> AIResponse:
         """
-        Continue a tool clarification session with user input.
+        Continue a tool clarification session with rigorous gating.
+        Only accepts parameter input or cancellation during active tool session.
         
         Args:
             session_id (str): Session identifier
             user_input (str): User's response to clarification question
             
         Returns:
-            AIResponse: Either another clarification question or tool execution result
+            AIResponse: Either another clarification question, gating notice, or tool execution result
         """
         try:
-            if session_id not in self._pending_sessions:
-                logging.warning(f'[AIHandler] No pending session found for {session_id}')
+            if session_id not in self._tool_sessions:
+                logging.warning(f'[AIHandler] No tool session found for {session_id}')
                 return AIResponse(
-                    text="Nessuna sessione di chiarimento attiva.",
+                    text="Nessuna sessione tool attiva.",
                     success=False,
                     response_type="error"
                 )
             
-            pending_session = self._pending_sessions[session_id]
+            session = self._tool_sessions[session_id]
+            
+            # Check for cancellation keywords
+            cancel_keywords = ['annulla', 'cancella', 'stop', 'basta', 'esci']
+            if any(keyword in user_input.lower() for keyword in cancel_keywords):
+                return self.cancel_tool_session(session_id)
             
             # Extract parameters from user response
             extracted_params = {}
@@ -1189,8 +1284,8 @@ class AIHandler:
                 try:
                     extracted_params = self._llm_intent_detector.extract_parameters(
                         user_input,
-                        pending_session.tool_name,
-                        pending_session.schema
+                        session.tool_name,
+                        session.schema
                     )
                     logging.debug(f'[AIHandler] LLM extracted parameters: {extracted_params}')
                 except Exception as e:
@@ -1198,85 +1293,165 @@ class AIHandler:
             
             # Fallback: try simple pattern matching for common parameters
             if not extracted_params:
-                extracted_params = self._fallback_parameter_extraction(user_input, pending_session.missing)
+                extracted_params = self._fallback_parameter_extraction(user_input, session.missing)
             
             # Normalize parameters (e.g., preferences for navigation)
-            extracted_params = self._normalize_parameters(extracted_params, pending_session.tool_name)
+            extracted_params = self._normalize_parameters(extracted_params, session.tool_name)
             
-            # Merge with existing parameters
-            pending_session.parameters.update(extracted_params)
+            # Check if any required parameters were extracted
+            relevant_params = {}
+            for param_name, param_value in extracted_params.items():
+                if param_name in session.missing and param_value:
+                    relevant_params[param_name] = param_value
+            
+            # If no relevant parameters found, send gating notice
+            if not relevant_params:
+                # This is not pertinent input during tool mode
+                gating_message = (
+                    f'Sono nel ciclo di vita del Tool "{session.tool_name}" e al momento posso accettare solo:\n'
+                    f'- i parametri richiesti: {", ".join(session.missing)}\n'
+                    f'- oppure "annulla" per interrompere\n'
+                    f'Finché non ricevo {", ".join(session.missing)}, non posso gestire altre richieste. '
+                    f'[Modalità Tool attiva: {session.tool_name} | stato: {session.state} | missing: {", ".join(session.missing)}]'
+                )
+                
+                # Emit gating notice event
+                self._emit_backend_action('tool_gating_notice', {
+                    'session_id': session_id,
+                    'tool_name': session.tool_name,
+                    'state': session.state,
+                    'message': f'Modalità Tool attiva: accetto solo {", ".join(session.missing)} o "annulla"',
+                    'missing_required': session.missing
+                })
+                
+                return AIResponse(
+                    text=gating_message,
+                    success=True,
+                    response_type="tool_gating"
+                )
+            
+            # Update session with new parameters
+            for param_name, param_value in relevant_params.items():
+                session.parameters[param_name] = param_value
+                
+                # Emit parameter received event
+                self._emit_backend_action('tool_parameter_received', {
+                    'session_id': session_id,
+                    'tool_name': session.tool_name,
+                    'param_name': param_name,
+                    'param_value': param_value,
+                    'params_partial': session.parameters.copy(),
+                    'missing_required': [p for p in session.missing if p != param_name]
+                })
             
             # Recalculate missing required parameters
-            pending_session.missing = [
-                req for req in pending_session.required 
-                if not self._is_parameter_present(req, pending_session.parameters)
+            session.missing = [
+                req for req in session.required 
+                if not self._is_parameter_present(req, session.parameters)
             ]
             
             # Check if we still have missing parameters
-            if pending_session.missing:
-                pending_session.asked_count += 1
-                
-                # Prevent infinite loops (max 2 attempts)
-                if pending_session.asked_count >= 2:
-                    question = f"Non ho ricevuto i dati necessari: {', '.join(pending_session.missing)}. Vuoi annullare o riprovare?"
-                    pending_session.last_question = question
-                    
-                    return AIResponse(
-                        text=question,
-                        success=True,
-                        response_type="clarification",
-                        metadata={"clarifying": True, "missing": pending_session.missing}
-                    )
+            if session.missing:
+                session.asked_count += 1
                 
                 # Generate next clarification question
-                question = self._generate_clarification_question(pending_session)
-                pending_session.last_question = question
+                question = self._generate_clarification_question(session)
+                session.last_question = question
+                
+                # Format response with updated missing list
+                param_received_msg = f'Parametro ricevuto: {", ".join([f"{k} = \"{v}\"" for k, v in relevant_params.items()])}. [Parametri richiesti aggiornati: {", ".join(session.missing)}]'
+                if session.missing:
+                    param_received_msg += f" {question}"
                 
                 return AIResponse(
-                    text=question,
+                    text=param_received_msg,
                     success=True,
                     response_type="clarification",
-                    metadata={"clarifying": True, "missing": pending_session.missing}
+                    metadata={"clarifying": True, "missing": session.missing}
                 )
             
             # All required parameters collected - execute tool
-            logging.info(f'[AIHandler] All parameters collected for {pending_session.tool_name}: {pending_session.parameters}')
+            logging.info(f'[AIHandler] All parameters collected for {session.tool_name}: {session.parameters}')
             
-            # Clean up pending session
-            del self._pending_sessions[session_id]
+            # Notify parameters complete and execute directly
+            param_complete_msg = f'Parametro ricevuto: {", ".join([f"{k} = \"{v}\"" for k, v in relevant_params.items()])}. [Parametri richiesti completi]'
             
-            # Emit tool ready and execute
-            self._emit_backend_action('tool_ready_to_start', {'tool_name': pending_session.tool_name})
-            self._emit_backend_action('tool_started', {
-                'tool_name': pending_session.tool_name, 
-                'parameters': pending_session.parameters
-            })
-            
-            # Execute the tool
-            tool_result = self._mcp_handler.execute_tool(pending_session.tool_name, pending_session.parameters)
-            
-            # Emit completion
-            try:
-                status_value = getattr(tool_result.status, 'value', str(tool_result.status))
-            except Exception:
-                status_value = 'unknown'
-            self._emit_backend_action('tool_finished', {
-                'tool_name': pending_session.tool_name, 
-                'status': status_value
-            })
-            
-            # Convert tool result to AI response
-            return self._convert_tool_result_to_ai_response(tool_result, pending_session.tool_name, user_input)
+            # Execute tool directly
+            return self._execute_tool_from_session(session_id, param_complete_msg)
             
         except Exception as e:
             logging.error(f'[AIHandler] Error in tool clarification continuation: {e}')
             
             # Clean up on error
-            if session_id in self._pending_sessions:
-                del self._pending_sessions[session_id]
+            if session_id in self._tool_sessions:
+                self._cleanup_tool_session(session_id, 'error', 'error', f'Error in clarification: {str(e)}')
             
             return AIResponse(
                 text="Si è verificato un errore durante il chiarimento dei parametri.",
+                success=False,
+                response_type="error"
+            )
+    
+    def _execute_tool_from_session(self, session_id: str, prefix_message: str = "") -> AIResponse:
+        """
+        Execute tool from an existing session.
+        """
+        if session_id not in self._tool_sessions:
+            return AIResponse(
+                text="Errore: sessione tool non trovata.",
+                success=False,
+                response_type="error"
+            )
+        
+        session = self._tool_sessions[session_id]
+        
+        # Update session state to ready_to_start
+        self._update_tool_session_state(session_id, 'ready_to_start')
+        self._emit_backend_action('tool_ready_to_start', {
+            'session_id': session_id,
+            'tool_name': session.tool_name
+        })
+        
+        # Update session state to running
+        self._update_tool_session_state(session_id, 'running')
+        self._emit_backend_action('tool_started', {
+            'session_id': session_id,
+            'tool_name': session.tool_name, 
+            'parameters': session.parameters
+        })
+        
+        # Execute the tool
+        logging.info(f'[AIHandler] Executing tool "{session.tool_name}" with parameters: {session.parameters}')
+        tool_result = self._mcp_handler.execute_tool(session.tool_name, session.parameters)
+        
+        # Emit completion event
+        try:
+            status_value = getattr(tool_result.status, 'value', str(tool_result.status))
+        except Exception:
+            status_value = 'unknown'
+        
+        self._emit_backend_action('tool_finished', {
+            'session_id': session_id,
+            'tool_name': session.tool_name, 
+            'status': status_value
+        })
+        
+        # Clean up session
+        self._cleanup_tool_session(session_id, 'finished', status_value, f"Tool {session.tool_name} completed")
+        
+        # Format result message
+        from backend.mcp.mcp_tool import ToolResultStatus
+        if tool_result.status == ToolResultStatus.SUCCESS:
+            result_message = f"{prefix_message} [tool_ready_to_start → {session.tool_name}] [tool_started → {session.tool_name} | parameters: {session.parameters}] {tool_result.data} [tool_finished → {session.tool_name} | status: {status_value}] [Modalità Tool disattivata: {session.tool_name} | session chiusa]"
+            return AIResponse(
+                text=result_message,
+                success=True,
+                response_type="tool_execution"
+            )
+        else:
+            error_message = f"Errore nell'esecuzione di {session.tool_name}: {tool_result.data}"
+            return AIResponse(
+                text=error_message,
                 success=False,
                 response_type="error"
             )
@@ -1422,21 +1597,29 @@ class AIHandler:
         params = {}
         user_lower = user_input.lower().strip()
         
+        # Skip extraction for obviously non-parameter inputs
+        question_indicators = ['come', 'cosa', 'chi', 'dove', 'quando', 'perché', 'stai', 'vai', 'fai']
+        if any(word in user_lower for word in question_indicators):
+            return params
+        
         # Simple pattern matching for common parameters
         if 'destination' in missing_params:
             # Extract destination from common patterns
             words = user_input.strip().split()
-            if words:
+            if words and len(words) <= 3:  # More restrictive
                 # If it's a single word or looks like a place name, use it as destination
                 if len(words) == 1 or any(word[0].isupper() for word in words):
-                    params['destination'] = user_input.strip()
+                    # Additional validation - check if it looks like a place name
+                    if not any(word.lower() in question_indicators for word in words):
+                        params['destination'] = user_input.strip()
         
         if 'location' in missing_params:
             # Similar to destination
             words = user_input.strip().split()
-            if words:
+            if words and len(words) <= 3:  # More restrictive
                 if len(words) == 1 or any(word[0].isupper() for word in words):
-                    params['location'] = user_input.strip()
+                    if not any(word.lower() in question_indicators for word in words):
+                        params['location'] = user_input.strip()
         
         # Check for toll/highway preferences
         if 'pedaggi' in user_lower or 'toll' in user_lower:
@@ -1543,3 +1726,194 @@ class AIHandler:
             self._ai_processor = None
             self._is_enabled = False
             return False
+
+    #----------------------------------------------------------------
+    # TOOL SESSION LIFECYCLE MANAGEMENT METHODS
+    #----------------------------------------------------------------
+    def is_tool_session_active(self, session_id: str) -> bool:
+        """
+        Check if there's an active tool session for the given session ID.
+        
+        Args:
+            session_id (str): Session identifier
+            
+        Returns:
+            bool: True if tool session is active, False otherwise
+        """
+        if session_id not in self._tool_sessions:
+            return False
+        
+        session = self._tool_sessions[session_id]
+        return session.active and session.state not in ['finished', 'canceled']
+    
+    def get_tool_session_state(self, session_id: str) -> Optional[str]:
+        """
+        Get the current state of a tool session.
+        
+        Args:
+            session_id (str): Session identifier
+            
+        Returns:
+            Optional[str]: Current state or None if session doesn't exist
+        """
+        if session_id in self._tool_sessions:
+            return self._tool_sessions[session_id].state
+        return None
+    
+    def _create_tool_session(
+        self, 
+        session_id: str, 
+        tool_name: str, 
+        tool_info: Dict[str, Any], 
+        initial_params: Dict[str, Any], 
+        missing_required: List[str]
+    ) -> None:
+        """
+        Create a new tool session for lifecycle management.
+        
+        Args:
+            session_id (str): Session identifier
+            tool_name (str): Name of the tool
+            tool_info (Dict[str, Any]): Tool information
+            initial_params (Dict[str, Any]): Initial parameters extracted
+            missing_required (List[str]): List of missing required parameters
+        """
+        try:
+            # Determine initial state based on missing parameters
+            initial_state = "clarifying" if missing_required else "ready_to_start"
+            
+            # Create tool session
+            session = ToolSessionState(
+                tool_name=tool_name,
+                tool_info=tool_info,
+                schema=tool_info.get('parameters_schema', {}),
+                state=initial_state,
+                active=True,
+                required=tool_info.get('parameters_schema', {}).get('required', []),
+                parameters=initial_params.copy(),
+                missing=missing_required.copy(),
+                last_question=None,
+                asked_count=0,
+                started_at=time.time(),
+                created_at=time.time()
+            )
+            
+            self._tool_sessions[session_id] = session
+            
+            # Emit tool lifecycle started event
+            self._emit_backend_action('tool_lifecycle_started', {
+                'session_id': session_id,
+                'tool_name': tool_name,
+                'state': initial_state,
+                'missing_required': missing_required,
+                'params_partial': initial_params,
+                'timestamp': session.created_at
+            })
+            
+            logging.info(f'[AIHandler] Created tool session {session_id} for {tool_name} in state {initial_state}')
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error creating tool session: {e}')
+    
+    def _update_tool_session_state(self, session_id: str, new_state: str, **kwargs) -> None:
+        """
+        Update the state of a tool session.
+        
+        Args:
+            session_id (str): Session identifier
+            new_state (str): New state to set
+            **kwargs: Additional data to update in the session
+        """
+        if session_id not in self._tool_sessions:
+            logging.warning(f'[AIHandler] Attempted to update non-existent tool session {session_id}')
+            return
+        
+        session = self._tool_sessions[session_id]
+        old_state = session.state
+        session.state = new_state
+        
+        # Update any additional fields passed in kwargs
+        for key, value in kwargs.items():
+            if hasattr(session, key):
+                setattr(session, key, value)
+        
+        logging.debug(f'[AIHandler] Updated tool session {session_id} state: {old_state} → {new_state}')
+    
+    def _cleanup_tool_session(self, session_id: str, final_state: str, status: str = "", message: str = "") -> None:
+        """
+        Clean up and remove a tool session at the end of its lifecycle.
+        
+        Args:
+            session_id (str): Session identifier
+            final_state (str): Final state (finished/canceled/error)
+            status (str): Final status
+            message (str): Final message
+        """
+        if session_id not in self._tool_sessions:
+            return
+        
+        session = self._tool_sessions[session_id]
+        tool_name = session.tool_name
+        
+        # Emit lifecycle finished event
+        self._emit_backend_action('tool_lifecycle_finished', {
+            'session_id': session_id,
+            'tool_name': tool_name,
+            'final_state': final_state,
+            'status': status,
+            'message': message
+        })
+        
+        # Remove session from memory
+        del self._tool_sessions[session_id]
+        
+        logging.info(f'[AIHandler] Cleaned up tool session {session_id} for {tool_name} with final state {final_state}')
+    
+    def cancel_tool_session(self, session_id: str) -> AIResponse:
+        """
+        Cancel an active tool session.
+        
+        Args:
+            session_id (str): Session identifier
+            
+        Returns:
+            AIResponse: Confirmation of cancellation
+        """
+        try:
+            if session_id not in self._tool_sessions:
+                return AIResponse(
+                    text="Nessuna operazione da annullare.",
+                    success=True,
+                    response_type="conversational"
+                )
+            
+            session = self._tool_sessions[session_id]
+            tool_name = session.tool_name
+            current_state = session.state
+            
+            # Emit session canceled event
+            self._emit_backend_action('tool_session_canceled', {
+                'session_id': session_id,
+                'tool_name': tool_name,
+                'state': current_state,
+                'reason': 'user_request',
+                'params_partial': session.parameters
+            })
+            
+            # Clean up session
+            self._cleanup_tool_session(session_id, 'canceled', 'user_canceled', f'Tool {tool_name} canceled by user')
+            
+            logging.info(f'[AIHandler] Canceled tool session for {tool_name}')
+            return AIResponse(
+                text=f'Operazione annullata. Ho terminato il ciclo di vita del Tool "{tool_name}". [tool_session canceled → {tool_name}] [Modalità Tool disattivata: {tool_name} | session chiusa]',
+                success=True,
+                response_type="conversational"
+            )
+                
+        except Exception as e:
+            logging.error(f'[AIHandler] Error canceling tool session: {e}')
+            return AIResponse(
+                text="Errore durante l'annullamento dell'operazione.",
+                success=False,
+                response_type="error"
+            )

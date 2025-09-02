@@ -17,6 +17,7 @@ from .ai_processor import AIProcessor  # Il processor (può essere single-provid
 from .ai_response import AIResponse
 from .llm_intent_detector import LLMIntentDetector, IntentDetectionResult
 from .intent_prompts import get_clarification_prompt
+from .tool_lifecycle_agent import ToolLifecycleAgent
 
 # Import opzionale dell'Enum AIProvider (presente solo se l'AIProcessor è dual-provider)
 try:
@@ -154,6 +155,26 @@ class AIHandler:
             
             # Backward compatibility
             self._pending_sessions: Dict[str, ToolSessionState] = self._tool_sessions
+            
+            #----------------------------------------------------------------
+            # TOOL LIFECYCLE AGENT INTEGRATION
+            #----------------------------------------------------------------
+            # Initialize the ToolLifecycleAgent for delegation
+            self._tool_lifecycle_agent = None
+            self._delegated_sessions: Dict[str, bool] = {}  # Track which sessions are delegated
+            
+            if self._mcp_handler:
+                try:
+                    self._tool_lifecycle_agent = ToolLifecycleAgent(
+                        ai_processor=self._ai_processor,
+                        mcp_handler=self._mcp_handler,
+                        event_emitter=self._event_emitter,
+                        on_complete=self._on_tool_lifecycle_complete
+                    )
+                    logging.info('[AIHandler] ToolLifecycleAgent initialized successfully')
+                except Exception as e:
+                    logging.error(f'[AIHandler] Failed to initialize ToolLifecycleAgent: {e}')
+                    self._tool_lifecycle_agent = None
             
             #----------------------------------------------------------------
             # LOG DI STATO
@@ -316,11 +337,229 @@ class AIHandler:
             return None
     
     #----------------------------------------------------------------
-    # GESTIONE RICHIESTE AI CON SUPPORTO MCP
+    # DELEGATION AND ROUTING METHODS
+    #----------------------------------------------------------------
+    def has_active_delegation(self, session_id: str) -> bool:
+        """
+        Check if there's an active delegation for the given session.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            bool: True if delegation is active
+        """
+        return (session_id in self._delegated_sessions and 
+                self._delegated_sessions[session_id] and
+                self._tool_lifecycle_agent and
+                self._tool_lifecycle_agent.is_active(session_id))
+    
+    def route_user_message(self, session_id: str, text: str) -> AIResponse:
+        """
+        Route user message to the appropriate handler based on delegation state.
+        
+        Args:
+            session_id: Session identifier
+            text: User input text
+            
+        Returns:
+            AIResponse: Response from appropriate handler
+        """
+        try:
+            # Check if delegation is active
+            if self.has_active_delegation(session_id):
+                # Route to ToolLifecycleAgent
+                logging.debug(f'[AIHandler] Routing message to ToolLifecycleAgent for session {session_id}')
+                return self._tool_lifecycle_agent.handle_user_message(session_id, text)
+            else:
+                # Route to main LLM with intent detection
+                logging.debug(f'[AIHandler] Routing message to main LLM for session {session_id}')
+                return self._handle_main_llm_request(session_id, text)
+        
+        except Exception as e:
+            logging.error(f'[AIHandler] Error in message routing: {e}')
+            return AIResponse(
+                text="Si è verificato un errore nell'elaborazione del messaggio.",
+                success=False,
+                response_type="error"
+            )
+    
+    def _handle_main_llm_request(self, session_id: str, text: str) -> AIResponse:
+        """
+        Handle request with main LLM including intent detection and delegation.
+        
+        Args:
+            session_id: Session identifier
+            text: User input text
+            
+        Returns:
+            AIResponse: Response from main LLM or delegation start
+        """
+        try:
+            context = {'session_id': session_id}
+            
+            # Step 1: Tool intent detection (if MCP enabled)
+            if self._tool_detection_enabled and self._tool_lifecycle_agent:
+                tool_intent = self._detect_tool_intent(text, context)
+                if tool_intent:
+                    # Check confidence level
+                    confidence = tool_intent.get('confidence', 0.0)
+                    
+                    # High confidence → immediate delegation
+                    if confidence >= 0.8:  # High confidence threshold
+                        return self._delegate_to_tool_agent(session_id, text, tool_intent)
+                    # Medium confidence → can ask clarification "out of cycle" or delegate
+                    elif confidence >= 0.5:  # Medium confidence threshold
+                        # For now, delegate on medium confidence too
+                        # In a more sophisticated system, this could involve asking clarification first
+                        return self._delegate_to_tool_agent(session_id, text, tool_intent)
+                    # Low confidence → continue with conversation
+                    else:
+                        logging.debug(f'[AIHandler] Low confidence tool intent ({confidence:.2f}), continuing conversation')
+            
+            # Step 2: Standard conversational response
+            response = self._ai_processor.process_request(text, context)
+            if response.success:
+                logging.info('[AIHandler] Conversational request processed successfully')
+            else:
+                logging.warning(f'[AIHandler] Conversational request failed: {response.message}')
+            return response
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error in main LLM request: {e}')
+            return AIResponse(
+                text="Mi dispiace, si è verificato un errore imprevisto. Riprova più tardi.",
+                response_type='error',
+                success=False,
+                message=f"Main LLM error: {str(e)}"
+            )
+    
+    def _delegate_to_tool_agent(self, session_id: str, user_input: str, tool_intent: Dict[str, Any]) -> AIResponse:
+        """
+        Delegate tool handling to ToolLifecycleAgent.
+        
+        Args:
+            session_id: Session identifier
+            user_input: Original user input
+            tool_intent: Detected tool intent
+            
+        Returns:
+            AIResponse: Delegation confirmation or error
+        """
+        try:
+            if not self._tool_lifecycle_agent:
+                return self._fallback_to_conversation(user_input, "ToolLifecycleAgent not available")
+            
+            # Get tool information
+            primary_category = tool_intent.get('primary_category')
+            available_tools = self._mcp_handler.get_tools_by_category(primary_category)
+            if not available_tools:
+                return self._fallback_to_conversation(user_input, f"No tools available for category: {primary_category}")
+            
+            # Select tool (for now, use first available)
+            selected_tool = available_tools[0]
+            tool_name = selected_tool.get('name')
+            if not tool_name:
+                return self._fallback_to_conversation(user_input, "Invalid tool information")
+            
+            # Extract initial parameters
+            initial_params = self._extract_tool_parameters(user_input, tool_name, selected_tool, {'session_id': session_id})
+            initial_params = self._normalize_parameters(initial_params, tool_name)
+            
+            # Emit delegation event (RED bubble)
+            self._event_emitter('delegation_main_to_agent', {
+                'from': 'LLM principale',
+                'to': 'ToolLifecycleAgent',
+                'session_id': session_id,
+                'tool_name': tool_name
+            })
+            
+            # Mark session as delegated
+            self._delegated_sessions[session_id] = True
+            
+            # Start tool lifecycle in agent
+            self._tool_lifecycle_agent.start(session_id, tool_name, selected_tool, initial_params)
+            
+            logging.info(f'[AIHandler] Delegated {tool_name} to ToolLifecycleAgent for session {session_id}')
+            
+            # Return confirmation that delegation started
+            # The actual tool lifecycle events will be emitted by the agent
+            return AIResponse(
+                text=f"Ho delegato la gestione di {tool_name} all'agente specializzato.",
+                success=True,
+                response_type="delegation_started"
+            )
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error delegating to tool agent: {e}')
+            return self._fallback_to_conversation(user_input, f"Delegation error: {str(e)}")
+    
+    def _on_tool_lifecycle_complete(self, session_id: str, outcome: Dict[str, Any]) -> None:
+        """
+        Handle completion of tool lifecycle from ToolLifecycleAgent.
+        
+        Args:
+            session_id: Session identifier
+            outcome: Outcome data from agent
+        """
+        try:
+            # Emit delegation return event (RED bubble)
+            self._event_emitter('delegation_agent_to_main', {
+                'from': 'ToolLifecycleAgent',
+                'to': 'LLM principale',
+                'session_id': session_id,
+                'tool_name': outcome.get('tool_name', 'unknown'),
+                'final_state': outcome.get('final_state', 'unknown')
+            })
+            
+            # Mark session as no longer delegated
+            if session_id in self._delegated_sessions:
+                del self._delegated_sessions[session_id]
+            
+            # Generate final user-friendly response using main LLM
+            self._generate_final_response(session_id, outcome)
+            
+            logging.info(f'[AIHandler] Tool lifecycle completed for session {session_id}, control returned to main LLM')
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error handling tool lifecycle completion: {e}')
+    
+    def _generate_final_response(self, session_id: str, outcome: Dict[str, Any]) -> None:
+        """
+        Generate a final user-friendly response after tool completion.
+        
+        Args:
+            session_id: Session identifier
+            outcome: Tool execution outcome
+        """
+        try:
+            tool_name = outcome.get('tool_name', 'unknown')
+            final_state = outcome.get('final_state', 'unknown')
+            status = outcome.get('status', 'unknown')
+            
+            # Create a context-aware final response
+            if final_state == 'finished' and status == 'success':
+                final_message = f"Ho completato con successo l'operazione {tool_name}. L'attività è stata eseguita correttamente."
+            elif final_state == 'canceled':
+                final_message = f"L'operazione {tool_name} è stata annullata come richiesto."
+            else:
+                final_message = f"L'operazione {tool_name} si è conclusa con stato: {final_state}."
+            
+            # Emit final response as backend_response
+            if callable(self._event_emitter):
+                # Using a custom event for the final response
+                # In a real implementation, this might go through the communication handler
+                logging.info(f'[AIHandler] Final response: {final_message}')
+            
+        except Exception as e:
+            logging.error(f'[AIHandler] Error generating final response: {e}')
+
+    #----------------------------------------------------------------
+    # GESTIONE RICHIESTE AI CON SUPPORTO MCP (MODIFIED FOR DELEGATION)
     #----------------------------------------------------------------
     def handle_ai_request(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> AIResponse:
         """
-        Handle an AI request from the user with MCP tool detection.
+        Handle an AI request from the user with delegation support.
         """
         # Validazione
         if not self._validate_input(user_input):
@@ -345,20 +584,11 @@ class AIHandler:
         logging.info(f'[AIHandler] Processing AI request: "{user_input[:100]}..."')
         
         try:
-            # Step 1: Intenti tool (se MCP abilitato)
-            if self._tool_detection_enabled:
-                tool_intent = self._detect_tool_intent(user_input, context)
-                if tool_intent:
-                    return self._handle_tool_request(user_input, tool_intent, context)
+            # Extract session_id from context
+            session_id = context.get('session_id') if context else 'default'
             
-            # Step 2: Conversazione standard
-            response = self._ai_processor.process_request(user_input, context)
-            if response.success:
-                logging.info('[AIHandler] AI request processed successfully')
-                logging.debug(f'[AIHandler] AI response: "{response.text[:100]}..."')
-            else:
-                logging.warning(f'[AIHandler] AI request failed: {response.message}')
-            return response
+            # Use the new routing system
+            return self.route_user_message(session_id, user_input)
             
         except Exception as e:
             logging.error(f'[AIHandler] Unexpected error processing AI request: {e}')

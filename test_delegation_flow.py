@@ -114,6 +114,33 @@ class MockLLMIntentDetector:
                 clarification_needed=False,
                 clarification_questions=[]
             )
+    
+    def extract_parameters(self, user_input, tool_name, tool_schema, context=None):
+        """Mock parameter extraction"""
+        # Simple mock parameter extraction
+        params = {}
+        user_lower = user_input.lower()
+        
+        if tool_name == 'set_route_sample':
+            # Look for destination-like words (but be more selective)
+            words = user_input.strip().split()
+            for word in words:
+                # Only extract proper destination names, not command words
+                if (len(word) > 2 and word[0].isupper() and 
+                    word.lower() not in ['impostami', 'imposta', 'per', 'una', 'rotta']):
+                    params['destination'] = word
+                    break
+        
+        elif tool_name == 'get_weather_sample':
+            # Look for location-like words
+            words = user_input.strip().split()
+            for word in words:
+                if (len(word) > 2 and word[0].isupper() and 
+                    word.lower() not in ['meteo', 'tempo', 'per', 'di']):
+                    params['location'] = word
+                    break
+        
+        return params
 
 class TestDelegationFlow:
     def __init__(self):
@@ -275,6 +302,30 @@ class TestDelegationFlow:
         
         print("✅ Delegation cancellation works!")
     
+    def test_immediate_execution_delegation(self):
+        """Test immediate execution when all parameters are provided"""
+        print("\n--- Test: Immediate Execution Delegation ---")
+        self.clear_events()
+        
+        # Request with all parameters provided (should execute immediately)
+        response = self.ai_handler.route_user_message("test_immediate", "Impostami una rotta per Napoli")
+        
+        # Check for delegation events
+        main_to_agent = [e for e in self.events if e['action'] == 'delegation_main_to_agent']
+        agent_to_main = [e for e in self.events if e['action'] == 'delegation_agent_to_main']
+        tool_started = [e for e in self.events if e['action'] == 'tool_started']
+        tool_finished = [e for e in self.events if e['action'] == 'tool_lifecycle_finished']
+        
+        assert len(main_to_agent) >= 1, "Should emit delegation_main_to_agent"
+        assert len(agent_to_main) >= 1, "Should emit delegation_agent_to_main"
+        assert len(tool_started) >= 1, "Should start tool execution"
+        assert len(tool_finished) >= 1, "Should finish tool execution"
+        
+        # Verify delegation is no longer active
+        assert not self.ai_handler.has_active_delegation("test_immediate"), "Delegation should be complete"
+        
+        print("✅ Immediate execution delegation works!")
+    
     def test_gating_during_delegation(self):
         """Test that non-relevant input is gated during delegation"""
         print("\n--- Test: Gating During Delegation ---")
@@ -303,6 +354,7 @@ class TestDelegationFlow:
             self.test_high_confidence_delegation()
             self.test_conversational_no_delegation()
             self.test_delegation_with_clarification()
+            self.test_immediate_execution_delegation()
             self.test_delegation_cancellation()
             self.test_gating_during_delegation()
             

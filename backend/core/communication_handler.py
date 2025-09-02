@@ -96,15 +96,11 @@ class CommunicationHandler:
     def _handle_frontend_command(self, json_data: Optional[Dict[str, Any]], sid: Optional[str] = None) -> None:
         """
         Handle a request received from the frontend with rigorous tool session gating.
-        
+
         This method processes both commands and AI requests sent by the frontend client,
         validates the input, routes to appropriate processor, and sends responses.
-        
+
         During active tool sessions, ALL input is routed to tool handling except cancellation.
-        
-        Args:
-            json_data (Optional[Dict[str, Any]]): The JSON data received from frontend
-            sid (Optional[str]): The Socket.IO session id of the client
         """
         try:
             # Estrazione e validazione input
@@ -112,55 +108,48 @@ class CommunicationHandler:
             if user_input is None:
                 self._send_error_response('Richiesta non valida o vuota', sid)
                 return
-            
+
             logging.info(f'[CommunicationHandler] Received input: "{user_input}"')
-            
-            # RIGOROUS GATING: Check if there's an active delegation or tool session
+
+            # 1) Gestisci SEMPRE i comandi prima di qualsiasi routing verso LLM/delegation
+            if self._is_command(user_input):
+                result, is_recognized = self._command_processor.process_command(user_input)
+                if is_recognized:
+                    self._send_command_response(result, sid)
+                else:
+                    self._send_error_response(result.data, sid)
+                return
+
+            # 2) Delegation-aware routing (solo se NON è un comando)
             session_id = sid or 'default'
-            
-            # Use new routing method that handles delegation
+
             if hasattr(self._ai_handler, 'route_user_message'):
                 logging.debug(f'[CommunicationHandler] Using delegation-aware routing for {session_id}')
                 ai_response = self._ai_handler.route_user_message(session_id, user_input)
                 self._send_ai_response(ai_response, sid)
                 return
-            
-            # Legacy fallback for tool sessions
+
+            # 3) Legacy fallback per tool sessions
             elif hasattr(self._ai_handler, 'is_tool_session_active') and self._ai_handler.is_tool_session_active(session_id):
                 logging.debug(f'[CommunicationHandler] Active tool session detected for {session_id} - routing to tool handler')
-                
-                # During active tool session, ALL input goes to clarification handler
-                # The clarification handler will determine if it's relevant or needs gating
                 ai_response = self._ai_handler.continue_tool_clarification(session_id, user_input)
                 self._send_ai_response(ai_response, sid)
                 return
-            
-            # No active tool session - normal processing
-            # Comando o richiesta AI?
-            if self._is_command(user_input):
-                # Processo come comando
-                result, is_recognized = self._command_processor.process_command(user_input)
-                
-                if is_recognized:
-                    self._send_command_response(result, sid)
-                else:
-                    self._send_error_response(result.data, sid)
-            else:
-                # Richiesta AI con streaming in background
-                request_id = str(uuid.uuid4())
-                logging.debug(f'[CommunicationHandler] Starting AI request with ID: {request_id}')
-                
-                self._socketio_instance.start_background_task(
-                    self._handle_ai_streaming_request,
-                    user_input,
-                    request_id,
-                    sid
-                )
-                
+
+            # 4) Fallback: richiesta AI normale (streaming)
+            request_id = str(uuid.uuid4())
+            logging.debug(f'[CommunicationHandler] Starting AI request with ID: {request_id}')
+            self._socketio_instance.start_background_task(
+                self._handle_ai_streaming_request,
+                user_input,
+                request_id,
+                sid
+            )
+
         except Exception as e:
             logging.error(f'[CommunicationHandler] Error handling frontend request: {e}')
             self._send_error_response('Errore interno del server', sid)
-    
+
     #----------------------------------------------------------------
     # GESTIONE: TOGGLE PROVIDER AI (LOCAL ↔ GEMINI)
     #----------------------------------------------------------------

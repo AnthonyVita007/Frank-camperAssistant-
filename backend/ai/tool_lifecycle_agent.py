@@ -396,10 +396,9 @@ class ToolLifecycleAgent:
         try:
             # Update session state to ready_to_start
             session.state = 'ready_to_start'
-            self._event_emitter('tool_parameters_ready', {
+            self._event_emitter('tool_ready_to_start', {
                 'session_id': session_id,
-                'tool_name': session.tool_name,
-                'parameters': session.parameters
+                'tool_name': session.tool_name
             })
             
             # Update session state to running
@@ -433,7 +432,7 @@ class ToolLifecycleAgent:
             # Format result message
             from backend.mcp.mcp_tool import ToolResultStatus
             if tool_result.status == ToolResultStatus.SUCCESS:
-                result_message = f"[tool_parameters_ready → {session.tool_name}] [tool_started → {session.tool_name} | parameters: {session.parameters}] {tool_result.data} [tool_result → {session.tool_name} | status: {status_value}] [Modalità Tool disattivata: {session.tool_name} | session chiusa]"
+                result_message = f"[tool_ready_to_start → {session.tool_name}] [tool_started → {session.tool_name} | parameters: {session.parameters}] {tool_result.data} [tool_result → {session.tool_name} | status: {status_value}] [Modalità Tool disattivata: {session.tool_name} | session chiusa]"
                 return AIResponse(
                     text=result_message,
                     success=True,

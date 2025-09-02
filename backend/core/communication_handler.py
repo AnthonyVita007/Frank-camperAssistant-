@@ -115,9 +115,18 @@ class CommunicationHandler:
             
             logging.info(f'[CommunicationHandler] Received input: "{user_input}"')
             
-            # RIGOROUS GATING: Check if there's an active tool session
+            # RIGOROUS GATING: Check if there's an active delegation or tool session
             session_id = sid or 'default'
-            if hasattr(self._ai_handler, 'is_tool_session_active') and self._ai_handler.is_tool_session_active(session_id):
+            
+            # Use new routing method that handles delegation
+            if hasattr(self._ai_handler, 'route_user_message'):
+                logging.debug(f'[CommunicationHandler] Using delegation-aware routing for {session_id}')
+                ai_response = self._ai_handler.route_user_message(session_id, user_input)
+                self._send_ai_response(ai_response, sid)
+                return
+            
+            # Legacy fallback for tool sessions
+            elif hasattr(self._ai_handler, 'is_tool_session_active') and self._ai_handler.is_tool_session_active(session_id):
                 logging.debug(f'[CommunicationHandler] Active tool session detected for {session_id} - routing to tool handler')
                 
                 # During active tool session, ALL input goes to clarification handler
@@ -290,10 +299,24 @@ class CommunicationHandler:
                 return
             
             if action == 'cancel_tool':
-                # Handle tool cancellation
+                # Handle tool cancellation with delegation support
                 session_id = sid or 'default'
                 
-                if hasattr(self._ai_handler, 'has_pending_tool_session') and self._ai_handler.has_pending_tool_session(session_id):
+                # Check if delegation is active and route to agent
+                if hasattr(self._ai_handler, 'has_active_delegation') and self._ai_handler.has_active_delegation(session_id):
+                    if hasattr(self._ai_handler, '_tool_lifecycle_agent') and self._ai_handler._tool_lifecycle_agent:
+                        ai_response = self._ai_handler._tool_lifecycle_agent.cancel(session_id, "user_cancel")
+                        self._send_ai_response(ai_response, sid)
+                        logging.info(f'[CommunicationHandler] Tool session canceled via agent for session {session_id}')
+                    else:
+                        ai_response = AIResponse(
+                            text="Errore: agente tool non disponibile.",
+                            success=False,
+                            response_type="error"
+                        )
+                        self._send_ai_response(ai_response, sid)
+                # Legacy tool session handling
+                elif hasattr(self._ai_handler, 'has_pending_tool_session') and self._ai_handler.has_pending_tool_session(session_id):
                     ai_response = self._ai_handler.cancel_tool_session(session_id)
                     self._send_ai_response(ai_response, sid)
                     logging.info(f'[CommunicationHandler] Tool session canceled for session {session_id}')

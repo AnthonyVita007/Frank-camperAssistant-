@@ -106,6 +106,46 @@ function appendToolBubble(message) {
 }
 
 //----------------------------------------------------------------
+// helper: append delegation bubble with red styling
+//----------------------------------------------------------------
+function appendDelegationBubble(message) {
+    //----------------------------------------------------------------
+    // CREAZIONE WRAPPER CHAT E BOLLA DELEGATION
+    //----------------------------------------------------------------
+    const wrapper = document.createElement('div');
+    wrapper.className = 'chat';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble bubble-delegation bubble-delegation-enter bubble-delegation-pulse-once';
+    bubble.setAttribute('role', 'status');
+    bubble.setAttribute('aria-live', 'polite');
+    
+    // Support for bold component names in delegation messages
+    if (message.includes('→')) {
+        const parts = message.split('→');
+        if (parts.length === 2) {
+            const beforeArrow = parts[0].trim();
+            const afterArrow = parts[1].trim();
+            bubble.innerHTML = `<strong>${beforeArrow}</strong> → <strong>${afterArrow}</strong>`;
+        } else {
+            bubble.textContent = message;
+        }
+    } else {
+        bubble.textContent = message;
+    }
+
+    wrapper.appendChild(bubble);
+    logContainer.appendChild(wrapper);
+
+    //----------------------------------------------------------------
+    // AUTOSCROLL E RITORNO RIFERIMENTO ALLA BOLLA
+    //----------------------------------------------------------------
+    logContainer.scrollTop = logContainer.scrollHeight;
+
+    return bubble;
+}
+
+//----------------------------------------------------------------
 // helper: pulisci tutto il log
 //----------------------------------------------------------------
 function clearLog() {
@@ -228,6 +268,24 @@ socket.on('backend_action', (payload) => {
             setSwitchUI(actualProvider);
             appendLog(`UI aggiornata per provider: ${actualProvider === 'gemini' ? 'CLOUD (Gemini)' : 'LOCAL (llama.cpp)'}`, 'system');
         }
+        return;
+    }
+
+    // DELEGATION EVENTS (RED BUBBLES)
+    if (action === 'delegation_main_to_agent') {
+        const from = data.from || 'LLM principale';
+        const to = data.to || 'ToolLifecycleAgent';
+        const toolName = data.tool_name || 'unknown';
+        appendDelegationBubble(`🔴 ${from} → passa i comandi a → ${to} | Tool: ${toolName}`);
+        return;
+    }
+
+    if (action === 'delegation_agent_to_main') {
+        const from = data.from || 'ToolLifecycleAgent';
+        const to = data.to || 'LLM principale';
+        const toolName = data.tool_name || 'unknown';
+        const finalState = data.final_state || 'unknown';
+        appendDelegationBubble(`🔴 ${from} → passa i comandi a → ${to} | Tool: ${toolName} | Stato: ${finalState}`);
         return;
     }
 

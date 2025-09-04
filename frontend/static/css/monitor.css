@@ -1,0 +1,404 @@
+/*----------------------------------------------------------------
+Stile "KITT" per Frank Camper Assistant - Monitor Emozioni
+Layout minimalista per video + overlay real-time
+----------------------------------------------------------------*/
+
+/*----------------------------------------------------------------
+VARIABILI, FONT E RESET BASE
+----------------------------------------------------------------*/
+@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+
+:root {
+  --black: #000000;
+  --white: #ffffff;
+  --red: #ff0000;
+  --red-soft: #ff4d4d;
+  --amber: #ffbf00;
+  --cyan: #00ffff;
+  --green: #00ff66;
+  --scanline: rgba(255, 255, 255, 0.035);
+
+  --console-font: 'VT323', Consolas, Menlo, Monaco, "Courier New", monospace;
+  --base-font-size: 20px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--black);
+  color: var(--white);
+  font-family: var(--console-font);
+  font-size: var(--base-font-size);
+  line-height: 1.4;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/*----------------------------------------------------------------
+HEADER FISSO
+----------------------------------------------------------------*/
+.header-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  background: linear-gradient(180deg, var(--black) 0%, rgba(0, 0, 0, 0.95) 100%);
+  border-bottom: 2px solid var(--red);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(255, 0, 0, 0.3);
+}
+
+.header-fixed h1 {
+  font-size: clamp(24px, 4vw, 32px);
+  font-weight: normal;
+  color: var(--red);
+  text-shadow: 0 0 8px rgba(255, 0, 0, 0.6);
+  letter-spacing: 2px;
+}
+
+.driver-info {
+  font-size: clamp(16px, 2.5vw, 20px);
+  color: var(--amber);
+  text-shadow: 0 0 4px rgba(255, 191, 0, 0.5);
+}
+
+/*----------------------------------------------------------------
+WORKSPACE CENTRALE
+----------------------------------------------------------------*/
+.workspace-scrollable {
+  flex: 1;
+  margin-top: 80px;
+  margin-bottom: 60px;
+  padding: 20px;
+  overflow-y: auto;
+  background: 
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      var(--scanline) 2px,
+      var(--scanline) 3px
+    );
+}
+
+.monitor-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 20px;
+  height: 100%;
+}
+
+/*----------------------------------------------------------------
+VIDEO CONTAINER CON OVERLAY
+----------------------------------------------------------------*/
+.video-container {
+  position: relative;
+  background: rgba(0, 0, 0, 0.8);
+  border: 2px solid var(--red);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 
+    0 0 20px rgba(255, 0, 0, 0.3),
+    inset 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+#videoElement {
+  width: 100%;
+  height: auto;
+  max-height: 60vh;
+  display: block;
+  background: var(--black);
+}
+
+#overlayCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.status-indicators {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--amber);
+  z-index: 20;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.status-item:last-child {
+  margin-bottom: 0;
+}
+
+.status-label {
+  color: var(--amber);
+  margin-right: 8px;
+  min-width: 80px;
+}
+
+.status-value {
+  color: var(--white);
+  font-weight: bold;
+}
+
+.status-value.connected {
+  color: var(--green);
+}
+
+.status-value.active {
+  color: var(--cyan);
+}
+
+.status-value.error {
+  color: var(--red);
+}
+
+/*----------------------------------------------------------------
+PANNELLO CONTROLLI
+----------------------------------------------------------------*/
+.control-panel {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid var(--amber);
+  border-radius: 6px;
+  flex-wrap: wrap;
+}
+
+.control-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: transparent;
+  border: 2px solid;
+  border-radius: 4px;
+  font-family: var(--console-font);
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.control-btn.primary {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.control-btn.primary:hover:not(:disabled) {
+  background: var(--green);
+  color: var(--black);
+  box-shadow: 0 0 12px rgba(0, 255, 102, 0.5);
+}
+
+.control-btn.secondary {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.control-btn.secondary:hover:not(:disabled) {
+  background: var(--red);
+  color: var(--white);
+  box-shadow: 0 0 12px rgba(255, 0, 0, 0.5);
+}
+
+.control-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-icon {
+  font-size: 18px;
+}
+
+.analysis-rate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--amber);
+}
+
+.analysis-rate label {
+  font-size: 14px;
+}
+
+.analysis-rate select {
+  background: var(--black);
+  color: var(--white);
+  border: 1px solid var(--amber);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-family: var(--console-font);
+  font-size: 14px;
+}
+
+/*----------------------------------------------------------------
+DISPLAY EMOZIONE CORRENTE
+----------------------------------------------------------------*/
+.emotion-display {
+  background: rgba(0, 0, 0, 0.8);
+  border: 2px solid var(--cyan);
+  border-radius: 6px;
+  padding: 16px;
+  text-align: center;
+}
+
+.current-emotion {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.emotion-label {
+  color: var(--cyan);
+  font-size: 18px;
+  text-shadow: 0 0 4px rgba(0, 255, 255, 0.5);
+}
+
+.emotion-value {
+  color: var(--white);
+  font-size: 24px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+  min-width: 120px;
+}
+
+.emotion-value.happy {
+  color: var(--green);
+  text-shadow: 0 0 8px rgba(0, 255, 102, 0.6);
+}
+
+.emotion-value.angry {
+  color: var(--red);
+  text-shadow: 0 0 8px rgba(255, 0, 0, 0.6);
+}
+
+.emotion-value.sad {
+  color: #4da6ff;
+  text-shadow: 0 0 8px rgba(77, 166, 255, 0.6);
+}
+
+.emotion-value.surprise {
+  color: var(--amber);
+  text-shadow: 0 0 8px rgba(255, 191, 0, 0.6);
+}
+
+.confidence-value {
+  color: var(--amber);
+  font-size: 16px;
+  opacity: 0.8;
+}
+
+/*----------------------------------------------------------------
+FOOTER FISSO
+----------------------------------------------------------------*/
+.footer-fixed {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: linear-gradient(0deg, var(--black) 0%, rgba(0, 0, 0, 0.95) 100%);
+  border-top: 2px solid var(--red);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  z-index: 1000;
+  box-shadow: 0 -4px 12px rgba(255, 0, 0, 0.3);
+}
+
+.footer-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  font-size: 14px;
+  color: var(--amber);
+}
+
+.connection-status {
+  color: var(--green);
+  font-weight: bold;
+}
+
+.connection-status.disconnected {
+  color: var(--red);
+}
+
+/*----------------------------------------------------------------
+RESPONSIVE
+----------------------------------------------------------------*/
+@media (max-width: 768px) {
+  .header-fixed,
+  .footer-fixed {
+    padding: 0 16px;
+  }
+  
+  .workspace-scrollable {
+    padding: 16px;
+  }
+  
+  .control-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .analysis-rate {
+    margin-left: 0;
+    justify-content: center;
+  }
+  
+  .current-emotion {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .driver-info {
+    display: none;
+  }
+  
+  .control-btn {
+    justify-content: center;
+  }
+  
+  .footer-content {
+    flex-direction: column;
+    gap: 4px;
+    text-align: center;
+  }
+}

@@ -23,6 +23,8 @@ FRANK è un assistente AI all-in-one, costruito su un Raspberry Pi 5, che si int
 5.  [Design Language: L'Estetica "KITT"](#5-design-language-lestetica-kitt)
 6.  [Struttura del Codice](#6-struttura-del-codice)
 7.  [Architettura MCP: come FRANK traduce richieste in azioni](#7-architettura-mcp-come-frank-traduce-richieste-in-azioni)
+8.  [Sistema di Monitoraggio Emozioni](#8-sistema-di-monitoraggio-emozioni)
+9.  [Configurazione e Deployment](#9-configurazione-e-deployment)
 
 ---
 ### 1. Visione del Progetto
@@ -165,3 +167,131 @@ In parole tecniche ma semplici
   - Azioni concrete: la richiesta non resta “a parole”, ma diventa una funzione attivata nel sistema.
 
 In sintesi: MCP consente a FRANK di essere non solo un assistente che comprende, ma un agente che agisce. Tu esprimi un obiettivo; FRANK seleziona lo strumento giusto, raccoglie i dettagli necessari, esegue e ti tiene informato passo dopo passo.
+
+---
+
+### 8. Sistema di Monitoraggio Emozioni
+
+FRANK include un sistema avanzato di monitoraggio emozioni in tempo reale che utilizza la webcam per rilevare e analizzare le espressioni facciali del guidatore, fornendo feedback utile per il benessere durante la guida.
+
+#### 8.1 Caratteristiche del Sistema
+
+- **Rilevamento Volti Real-time**: Utilizza OpenCV con Haar Cascades per il rilevamento dei volti con fallback automatico ai modelli integrati
+- **Analisi Emozioni**: Modello TensorFlow per la classificazione delle emozioni (felice, triste, arrabbiato, sorpreso, paura, disgusto, neutrale)
+- **Thread Safety**: Sistema progettato per la stabilità su Windows con lock per evitare race conditions
+- **UI Minimalista**: Interfaccia semplificata che mostra solo il feed video con overlay real-time delle emozioni rilevate
+
+#### 8.2 Stabilità AI e Compatibilità Windows
+
+Il sistema è stato progettato per massimizzare la stabilità su sistemi Windows:
+
+- **Fallback Haar Cascade**: Se il percorso custom non è valido, il sistema fallback automaticamente alla cascade integrata in OpenCV (`cv2.data.haarcascades`)
+- **Thread Safety**: Tutte le operazioni di rilevamento e inferenza sono protette da lock per evitare crash concorrenti
+- **OpenCV Single Thread**: `cv2.setNumThreads(1)` per ridurre problemi di threading su Windows
+- **Controllo Percorsi ASCII**: Raccomandazioni per evitare caratteri non-ASCII nei percorsi per compatibilità Windows
+
+#### 8.3 Configurazione e Utilizzo
+
+**Accesso al Monitor**: Naviga a `/monitor/<driver_id>` per accedere all'interfaccia di monitoraggio.
+
+**Variabili d'Ambiente Supportate**:
+```bash
+# Percorsi AI
+EMOTION_MODEL_PATH=models/emotion_model.keras  # Percorso al modello Keras
+HAAR_CASCADE_PATH=path/to/custom/cascade.xml   # Percorso custom cascade (opzionale)
+
+# Configurazione Server (via run.py)
+FLASK_USE_RELOADER=0    # Disabilita reloader per stabilità (default: 1)
+FLASK_THREADED=1        # Abilita threading (default: 1)
+```
+
+**Dipendenze Richieste**:
+- OpenCV: `opencv-python==4.10.0.84`
+- TensorFlow: `tensorflow==2.18.0`
+- NumPy: `numpy==1.26.4`
+
+#### 8.4 Interfaccia Utente
+
+L'interfaccia di monitoraggio è stata semplificata per ridurre distrazioni:
+
+- **Video Feed**: Streaming della webcam in tempo reale
+- **Canvas Overlay**: Riquadro del volto rilevato con etichetta emozione e confidenza
+- **Controlli Minimali**: Solo pulsanti di avvio/stop e regolazione FPS
+- **Design KITT**: Estetica coerente con il resto dell'interfaccia Frank
+
+#### 8.5 API Endpoints
+
+- `GET /monitor/<driver_id>`: Interfaccia web per il monitoraggio
+- `POST /api/drivers/<driver_id>/monitor/frame`: Analisi frame per rilevamento emozioni
+
+#### 8.6 Raccomandazioni per l'Uso
+
+- **Illuminazione**: Assicurarsi di avere illuminazione adeguata per il rilevamento dei volti
+- **Posizionamento Camera**: Posizionare la webcam ad altezza occhi per migliori risultati
+- **Performance**: Utilizzare 1 FPS per bilanciare prestazioni e accuratezza
+- **Privacy**: Il sistema analizza solo in locale, nessun dato viene inviato a servizi esterni
+
+---
+
+### 9. Configurazione e Deployment
+
+#### 9.1 Installazione Dipendenze
+
+```bash
+# Installa le dipendenze Python
+pip install -r requirements.txt
+
+# Per sviluppo con controllo stabilità
+pip install opencv-python tensorflow numpy
+```
+
+#### 9.2 Avvio del Server
+
+**Metodo Standard** (app.py):
+```bash
+python app.py
+```
+
+**Metodo Configurabile** (run.py):
+```bash
+# Avvio standard
+python run.py
+
+# Configurazione per stabilità massima su Windows
+FLASK_USE_RELOADER=0 FLASK_THREADED=0 python run.py
+
+# Configurazione per performance con threading controllato
+FLASK_USE_RELOADER=0 FLASK_THREADED=1 python run.py
+```
+
+#### 9.3 Requisiti Sistema
+
+- **Minimo**: Python 3.8+, 4GB RAM, webcam
+- **Raccomandato**: Python 3.9+, 8GB RAM, webcam HD
+- **AI Emozioni**: TensorFlow compatible GPU opzionale per performance migliori
+
+#### 9.4 Note per Windows
+
+- Evitare percorsi con caratteri non-ASCII per modelli AI e cascade
+- Utilizzare `FLASK_USE_RELOADER=0` in produzione per stabilità
+- Considerare antivirus exceptions per cartelle modelli AI
+
+#### 9.5 Troubleshooting
+
+**Problemi Comuni**:
+- **Haar Cascade vuoto**: Controlla i log per il fallback automatico a OpenCV built-in
+- **Crash threading**: Usa `FLASK_THREADED=0` per debugging
+- **Performance lenta**: Riduci FPS analisi o considera GPU acceleration
+- **Errori camera**: Verifica permessi webcam nel browser
+
+**Log Utili**:
+```bash
+# Verifica inizializzazione sistema AI
+grep "EmotionDetector" logs/app.log
+
+# Controlla fallback Haar Cascade
+grep "Haar Cascade" logs/app.log
+
+# Monitor performance threading
+grep "threading\|lock" logs/app.log
+```

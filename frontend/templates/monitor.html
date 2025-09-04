@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frank Assistant - Monitor Emozioni</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/monitor.css') }}">
+</head>
+
+<body>
+
+    <!-- HEADER FISSO -->
+    <header class="header-fixed">
+        <h1>Frank - Monitor Emozioni</h1>
+        <div class="driver-info">
+            <span>Driver ID: {{ driver_id }}</span>
+        </div>
+    </header>
+
+    <!-- WORKSPACE CENTRALE -->
+    <main class="workspace-scrollable">
+        <div class="monitor-container">
+            
+            <!-- Video Container with Overlay -->
+            <div class="video-container">
+                <video id="videoElement" autoplay muted playsinline>
+                    Il tuo browser non supporta il video streaming.
+                </video>
+                
+                <!-- Canvas overlay for face detection and emotion labels -->
+                <canvas id="overlayCanvas"></canvas>
+                
+                <!-- Status indicators -->
+                <div class="status-indicators">
+                    <div id="cameraStatus" class="status-item">
+                        <span class="status-label">Camera:</span>
+                        <span class="status-value" id="cameraStatusValue">Disconnessa</span>
+                    </div>
+                    <div id="detectionStatus" class="status-item">
+                        <span class="status-label">Rilevamento:</span>
+                        <span class="status-value" id="detectionStatusValue">In attesa</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Control Panel -->
+            <div class="control-panel">
+                <button id="startMonitoringBtn" class="control-btn primary">
+                    <span class="btn-icon">▶</span>
+                    <span class="btn-text">Avvia Monitoraggio</span>
+                </button>
+                
+                <button id="stopMonitoringBtn" class="control-btn secondary" disabled>
+                    <span class="btn-icon">⏹</span>
+                    <span class="btn-text">Ferma Monitoraggio</span>
+                </button>
+                
+                <div class="analysis-rate">
+                    <label for="analysisRate">FPS Analisi:</label>
+                    <select id="analysisRate">
+                        <option value="0.5">0.5 FPS</option>
+                        <option value="1" selected>1 FPS</option>
+                        <option value="2">2 FPS</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Current Emotion Display (Simple) -->
+            <div class="emotion-display">
+                <div class="current-emotion">
+                    <span class="emotion-label">Emozione Attuale:</span>
+                    <span id="currentEmotion" class="emotion-value">-</span>
+                    <span id="currentConfidence" class="confidence-value"></span>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- FOOTER FISSO -->
+    <footer class="footer-fixed">
+        <div class="footer-content">
+            <span>Frank Camper Assistant - Monitoraggio Emozioni Real-time</span>
+            <span id="connectionStatus" class="connection-status">Connesso</span>
+        </div>
+    </footer>
+
+    <!-- JavaScript per gestire il video streaming e l'analisi emozioni -->
+    <script src="{{ url_for('static', filename='js/monitor.js') }}"></script>
+
+</body>
+
+</html>

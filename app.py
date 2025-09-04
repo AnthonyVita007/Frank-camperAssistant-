@@ -18,12 +18,19 @@ e delegare la gestione degli eventi al controller principale.
 import logging
 import os
 import configparser
-from flask import Flask, render_template
+import time
+from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
+import base64
+import cv2
+import numpy as np
 
 # Importazione del nostro controller principale
 # // Da questo momento, tutta la logica degli eventi sarà gestita da un file separato.
 from backend.main_controller import setup_socketio_events
+
+# Importazione del sistema di rilevamento emozioni
+from app.ai.emotion_detector import analyze_frame, initialize_emotion_detector
 
 # Configurazione del sistema di logging (livello regolabile in base al DEBUG)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -59,6 +66,14 @@ app.config['SECRET_KEY'] = SECRET_KEY
 # Inizializzazione di SocketIO
 socketio = SocketIO(app)
 
+# Inizializzazione del sistema di rilevamento emozioni
+logging.info("Inizializzazione sistema di rilevamento emozioni...")
+emotion_detector_initialized = initialize_emotion_detector()
+if emotion_detector_initialized:
+    logging.info("Sistema di rilevamento emozioni inizializzato con successo")
+else:
+    logging.warning("Sistema di rilevamento emozioni non completamente disponibile")
+
 
 #
 # --------------------------------------------------------------------------------------------------
@@ -93,6 +108,53 @@ def debug_mode():
     """
     logging.info("Client richiede modalità debug.")
     return render_template('debug.html')
+
+# Rotta modalità monitor
+@app.route('/monitor/<driver_id>')
+def monitor_mode(driver_id):
+    """
+    Serve la pagina di monitoraggio emozioni per un driver specifico.
+    """
+    logging.info(f"Client richiede modalità monitor per driver {driver_id}.")
+    return render_template('monitor.html', driver_id=driver_id)
+
+# API endpoint per analisi frame emozioni
+@app.route('/api/drivers/<driver_id>/monitor/frame', methods=['POST'])
+def analyze_emotion_frame(driver_id):
+    """
+    Analizza un frame video per rilevamento emozioni.
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'frame' not in data:
+            return jsonify({'success': False, 'error': 'No frame data provided'}), 400
+        
+        # Decodifica il frame base64
+        frame_data = data['frame']
+        if frame_data.startswith('data:image'):
+            frame_data = frame_data.split(',')[1]
+        
+        # Converte base64 in immagine
+        img_bytes = base64.b64decode(frame_data)
+        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        
+        if frame is None:
+            return jsonify({'success': False, 'error': 'Invalid frame data'}), 400
+        
+        # Analizza il frame
+        result = analyze_frame(frame)
+        
+        # Aggiungi metadata
+        result['driver_id'] = driver_id
+        result['timestamp'] = time.time()
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logging.error(f"Error analyzing emotion frame for driver {driver_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 #

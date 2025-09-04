@@ -8,7 +8,7 @@ particularly for threading and reloader options which affect AI stability on Win
 
 import os
 import logging
-from app import app, socketio, HOST, PORT, DEBUG
+import configparser
 
 def get_env_bool(name: str, default: bool = True) -> bool:
     """Get boolean value from environment variable."""
@@ -17,6 +17,21 @@ def get_env_bool(name: str, default: bool = True) -> bool:
 
 def main():
     """Main entry point with configurable server settings."""
+    
+    # Load configuration
+    config = configparser.ConfigParser()
+    if os.path.exists('config.ini'):
+        config.read('config.ini')
+    
+    HOST = config.get('flask', 'HOST', fallback='0.0.0.0')
+    PORT = config.getint('flask', 'PORT', fallback=5000)
+    DEBUG = config.getboolean('flask', 'DEBUG', fallback=True)
+    
+    # Configure logging
+    if DEBUG:
+        logging.getLogger().setLevel(logging.DEBUG)
+    else:
+        logging.getLogger().setLevel(logging.INFO)
     
     # Read environment variables for server configuration
     use_reloader = get_env_bool('FLASK_USE_RELOADER', True)
@@ -38,15 +53,18 @@ def main():
     if not threaded:
         logging.info("Threading disabled - single-threaded mode for maximum stability")
     
+    # Import and start the Flask app
     try:
+        # Late import to avoid circular dependency
+        import app
+        
         # Start the server with the configured settings
-        socketio.run(
-            app,
+        app.socketio.run(
+            app.app,
             host=HOST,
             port=PORT,
             debug=DEBUG,
             use_reloader=use_reloader,
-            threaded=threaded,
             allow_unsafe_werkzeug=True if DEBUG else False
         )
     except KeyboardInterrupt:

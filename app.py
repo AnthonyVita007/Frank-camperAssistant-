@@ -30,7 +30,7 @@ import numpy as np
 from backend.main_controller import setup_socketio_events
 
 # Importazione del sistema di rilevamento emozioni
-from app.ai.emotion_detector import analyze_frame, initialize_emotion_detector
+from emotion_ai.ai.emotion_detector import analyze_frame, initialize_emotion_detector
 
 # Configurazione del sistema di logging (livello regolabile in base al DEBUG)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

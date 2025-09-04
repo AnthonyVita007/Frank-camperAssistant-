@@ -34,3 +34,15 @@ instance/
 
 # Data directory (if contains sensitive data)
 data/
+
+# AI Models and large files
+models/
+*.keras
+*.h5
+*.pkl
+*.model
+
+# Temporary files
+tmp/
+temp/
+create_dummy_model.py

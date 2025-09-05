@@ -402,20 +402,11 @@ class AIHandler:
             if self._tool_detection_enabled and self._tool_lifecycle_agent:
                 tool_intent = self._detect_tool_intent(text, context)
                 if tool_intent:
-                    # Check confidence level
+                    # CHANGE: Immediate delegation for ANY tool intent, regardless of confidence
+                    # This ensures no clarification from main LLM before delegation
                     confidence = tool_intent.get('confidence', 0.0)
-                    
-                    # High confidence → immediate delegation
-                    if confidence >= 0.8:  # High confidence threshold
-                        return self._delegate_to_tool_agent(session_id, text, tool_intent)
-                    # Medium confidence → can ask clarification "out of cycle" or delegate
-                    elif confidence >= 0.5:  # Medium confidence threshold
-                        # For now, delegate on medium confidence too
-                        # In a more sophisticated system, this could involve asking clarification first
-                        return self._delegate_to_tool_agent(session_id, text, tool_intent)
-                    # Low confidence → continue with conversation
-                    else:
-                        logging.debug(f'[AIHandler] Low confidence tool intent ({confidence:.2f}), continuing conversation')
+                    logging.debug(f'[AIHandler] Tool intent detected (confidence: {confidence:.2f}), delegating immediately')
+                    return self._delegate_to_tool_agent(session_id, text, tool_intent)
             
             # Step 2: Standard conversational response
             response = self._ai_processor.process_request(text, context)
